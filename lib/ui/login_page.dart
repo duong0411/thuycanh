@@ -3,8 +3,10 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
 
 import '../core/auth_provider.dart';
+import 'forgot_password_page.dart';
 import 'register_page.dart';
 import 'theme.dart';
+import 'widgets/feedback.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -26,17 +28,29 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _submit() async {
-    final auth = context.read<AuthProvider>();
-    final ok = await auth.login(_email.text, _pass.text);
-    if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(auth.error ?? 'Đăng nhập chưa thành công'),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: HydroTheme.panel,
-        ),
-      );
+    final email = _email.text.trim();
+    final pass = _pass.text;
+    if (email.isEmpty || pass.isEmpty) {
+      showAppSnack(context, message: 'Vui lòng nhập email và mật khẩu');
+      return;
     }
+
+    final auth = context.read<AuthProvider>();
+    final ok = await auth.login(email, pass);
+    if (!mounted) return;
+    if (!ok) {
+      showAppSnack(context, message: auth.error ?? 'Đăng nhập chưa thành công');
+      return;
+    }
+
+    showAppSnack(context, message: 'Đăng nhập thành công', success: true);
+    await showSuccessDialog(
+      context,
+      title: 'Đăng nhập thành công',
+      message: 'Tiếp theo hãy nhập tên chip để theo dõi máy.',
+    );
+    if (!mounted) return;
+    auth.confirmPendingSession(successMessage: 'Đăng nhập thành công');
   }
 
   @override
@@ -87,14 +101,14 @@ class _LoginPageState extends State<LoginPage> {
                   ).animate().fadeIn(duration: 450.ms).slideY(begin: 0.1),
                   const SizedBox(height: 12),
                   Text(
-                    'Đăng nhập để theo dõi hệ thống\nthủy canh IoT STEM realtime.',
+                    'Theo dõi dinh dưỡng và mực nước\nhệ thống thủy canh IoT STEM.',
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                           color: HydroTheme.water.withValues(alpha: 0.9),
                           height: 1.45,
                           fontSize: 16,
                         ),
                   ).animate().fadeIn(delay: 80.ms),
-                  SizedBox(height: h * 0.06),
+                  SizedBox(height: h * 0.055),
                   _field(
                     controller: _email,
                     label: 'Email',
@@ -115,7 +129,34 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 28),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () async {
+                        final nav = Navigator.of(context);
+                        final changed = await nav.push<bool>(
+                          MaterialPageRoute(builder: (_) => const ForgotPasswordPage()),
+                        );
+                        if (!mounted) return;
+                        if (changed == true) {
+                          showAppSnack(
+                            context,
+                            message: 'Đặt lại mật khẩu thành công — hãy đăng nhập',
+                            success: true,
+                          );
+                        }
+                      },
+                      child: Text(
+                        'Quên mật khẩu?',
+                        style: TextStyle(
+                          color: HydroTheme.water.withValues(alpha: 0.95),
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   SizedBox(
                     height: 56,
                     child: FilledButton(
@@ -135,7 +176,7 @@ class _LoginPageState extends State<LoginPage> {
                               ),
                             )
                           : const Text(
-                              'Vào ứng dụng',
+                              'Đăng nhập',
                               style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
                             ),
                     ),

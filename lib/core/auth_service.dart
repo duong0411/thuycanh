@@ -35,6 +35,21 @@ class AuthService {
     return UserModel.fromJson(jsonDecode(userData));
   }
 
+  Future<String?> loadSavedChipId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('thuycanh_chip_id');
+  }
+
+  Future<void> saveChipId(String chipId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('thuycanh_chip_id', chipId.trim());
+  }
+
+  Future<void> clearChipId() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('thuycanh_chip_id');
+  }
+
   Future<UserModel> login(String email, String password) async {
     await loadBaseUrl();
     final response = await http
@@ -82,6 +97,26 @@ class AuthService {
       return UserModel.fromJson(data['data']['user']);
     }
     throw Exception(data['message'] ?? 'Đăng ký thất bại');
+  }
+
+  Future<String> resetPassword(String email, String newPassword) async {
+    await loadBaseUrl();
+    final response = await http
+        .post(
+          Uri.parse('$baseUrl/auth/reset-password'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'email': email.trim(),
+            'newPassword': newPassword,
+          }),
+        )
+        .timeout(const Duration(seconds: 12));
+
+    final data = jsonDecode(response.body);
+    if (response.statusCode == 200 && data['success'] == true) {
+      return data['message']?.toString() ?? 'Đặt lại mật khẩu thành công';
+    }
+    throw Exception(data['message'] ?? 'Không đặt lại được mật khẩu');
   }
 
   Future<void> logout() async {

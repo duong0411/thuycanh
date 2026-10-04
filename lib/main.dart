@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 
 import 'core/auth_provider.dart';
 import 'core/hydro_provider.dart';
-import 'ui/device_gate_page.dart';
+import 'ui/connect_page.dart';
 import 'ui/home_page.dart';
 import 'ui/login_page.dart';
 import 'ui/theme.dart';
@@ -61,16 +61,8 @@ class _ThuyCanhAppState extends State<ThuyCanhApp> {
   }
 }
 
-class _AuthGate extends StatefulWidget {
+class _AuthGate extends StatelessWidget {
   const _AuthGate();
-
-  @override
-  State<_AuthGate> createState() => _AuthGateState();
-}
-
-class _AuthGateState extends State<_AuthGate> {
-  bool _mqttStarted = false;
-  String? _startedForUser;
 
   @override
   Widget build(BuildContext context) {
@@ -84,24 +76,14 @@ class _AuthGateState extends State<_AuthGate> {
     }
 
     if (!auth.isLoggedIn) {
-      _mqttStarted = false;
-      _startedForUser = null;
       return const LoginPage();
     }
 
     final hydro = context.watch<HydroProvider>();
-    final uid = auth.user?.id;
-    if (!_mqttStarted || _startedForUser != uid) {
-      _mqttStarted = true;
-      _startedForUser = uid;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        context.read<HydroProvider>().start(force: true);
-      });
-    }
 
-    // Bắt buộc kết nối đúng chipId (790) mới vào hệ thống giám sát
+    // Bắt buộc nhập tên chip + xác thực trước khi xem cảm biến
     if (!hydro.canEnterSystem) {
-      return const DeviceGatePage();
+      return const ConnectPage();
     }
 
     return const HomePage();

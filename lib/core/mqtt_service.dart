@@ -110,12 +110,16 @@ class MqttService {
     final client = _client;
     if (client == null || !isConnected) return;
 
-    // Chỉ subscribe topic thủy canh 790 — tránh nhận tele của chip 789
-    final topics = <String>{...AppConfig.subscribeTopics};
+    // Topic theo chip đang chọn (AppConfig.chipId) + wildcard tele.
+    final topics = <String>{
+      'tele/+/status',
+      ...AppConfig.subscribeTopics,
+    };
 
     for (final topic in topics) {
       try {
         client.subscribe(topic, MqttQos.atLeastOnce);
+        if (kDebugMode) print('MQTT SUB $topic');
       } catch (e) {
         if (kDebugMode) print('Subscribe error $topic: $e');
       }

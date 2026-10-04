@@ -22,9 +22,9 @@ class HydroProvider extends ChangeNotifier {
   bool powerOn = true;
   DateTime? lastUpdate;
 
-  /// Đã nhận tín hiệu đúng chipId cấu hình (790) — bắt buộc trước khi vào hệ thống.
   bool chipVerified = false;
   String linkedChipId = '';
+  bool chipBound = false;
 
   double? temperature;
   double? humidity;
@@ -46,8 +46,8 @@ class HydroProvider extends ChangeNotifier {
       waterPct != null ||
       distCm != null;
 
-  /// Chỉ vào Home khi MQTT OK + đúng chip 790 đang online / có tele.
   bool get canEnterSystem =>
+      chipBound &&
       mqttConnected &&
       chipVerified &&
       linkedChipId == AppConfig.chipId &&
@@ -83,7 +83,7 @@ class HydroProvider extends ChangeNotifier {
   }
 
   String get friendlyStatus {
-    if (!mqttConnected) return 'Đang kết nối MQTT...';
+    if (!mqttConnected) return 'Đang kết nối máy...';
     if (!hasTelemetry) return 'Đã sẵn sàng — chờ dữ liệu cảm biến';
     if (isWaterLow) return waterAlertTitle;
     if (isWaterFull) return waterAlertTitle;
@@ -101,12 +101,13 @@ class HydroProvider extends ChangeNotifier {
   Future<void> start({bool force = false}) async {
     connecting = true;
     if (force) {
-      // Force reconnect: yêu cầu xác thực lại chip
       chipVerified = false;
       linkedChipId = '';
       online = false;
     }
-    status = 'Đang kết nối chip ${AppConfig.chipId}...';
+    status = chipBound
+        ? 'Đang kết nối máy ${AppConfig.chipId}...'
+        : 'Đang kết nối...';
     notifyListeners();
 
     _sub ??= _mqtt.messages.listen(_onMessage);
@@ -114,16 +115,68 @@ class HydroProvider extends ChangeNotifier {
     final ok = await _mqtt.connect(force: force);
     connecting = false;
     if (!ok) {
-      status = 'Chưa kết nối MQTT — kéo xuống để thử lại';
+      status = 'Chưa kết nối được — hãy thử lại';
       notifyListeners();
       return;
     }
 
-    status = 'MQTT OK — chờ chip ${AppConfig.chipId} online...';
+    status = chipBound
+        ? 'Đang chờ máy ${AppConfig.chipId} phản hồi...'
+        : 'Đã sẵn sàng';
     notifyListeners();
   }
 
-  /// Topic phải thuộc đúng chip cấu hình (790), chặn chip khác (vd 789).
+  Future<bool> connectWithChip(String rawChipId) async {
+    final id = rawChipId.trim();
+    if (id.isEmpty) {
+      status = 'Vui lòng nhập tên chip';
+      notifyListeners();
+      return false;
+    }
+
+    AppConfig.setChipId(id);
+    chipBound = true;
+    chipVerified = false;
+    linkedChipId = '';
+    online = false;
+    temperature = null;
+    humidity = null;
+    ph = null;
+    tds = null;
+    waterPct = null;
+    distCm = null;
+    lightPct = null;
+    pumpOn = false;
+    lampOn = false;
+    waterAlert = WaterAlertLevel.ok;
+    lastUpdate = null;
+    status = 'Đang kết nối máy ${AppConfig.chipId}...';
+    notifyListeners();
+
+    await start(force: true);
+    return mqttConnected;
+  }
+
+  void disconnectChip() {
+    chipBound = false;
+    chipVerified = false;
+    linkedChipId = '';
+    online = false;
+    temperature = null;
+    humidity = null;
+    ph = null;
+    tds = null;
+    waterPct = null;
+    distCm = null;
+    lightPct = null;
+    pumpOn = false;
+    lampOn = false;
+    waterAlert = WaterAlertLevel.ok;
+    lastUpdate = null;
+    status = 'Đã ngắt thiết bị — nhập tên chip để kết nối lại';
+    notifyListeners();
+  }
+
   bool _isOurChipTopic(String topic) {
     final id = AppConfig.chipId;
     return topic == 'tele/$id/status' ||
@@ -140,7 +193,8 @@ class HydroProvider extends ChangeNotifier {
     final topic = data['topic'] as String? ?? '';
     final value = data['value'];
 
-    // Chặn mọi topic không phải chip 790
+    if (!chipBound) return;
+
     if (!_isOurChipTopic(topic)) {
       if (kDebugMode) print('Bỏ qua topic chip khác: $topic');
       return;
@@ -150,11 +204,10 @@ class HydroProvider extends ChangeNotifier {
       online = value.toString().toLowerCase() == 'online';
       if (online) {
         _markChipVerified();
-        status = hasTelemetry ? 'OK' : 'Chip ${AppConfig.chipId} online';
+        status = hasTelemetry ? 'OK' : 'Máy ${AppConfig.chipId} đã sẵn sàng';
       } else {
-        // Offline: không cho vào hệ thống nữa cho đến khi online lại
         online = false;
-        status = 'Chip ${AppConfig.chipId} offline — chờ kết nối lại';
+        status = 'Máy ${AppConfig.chipId} tạm offline — chờ kết nối lại';
       }
     } else if (_is(topic, AppConfig.topicTemp)) {
       temperature = _asDouble(value);
@@ -223,13 +276,11 @@ class HydroProvider extends ChangeNotifier {
   void _inferAlertFromDistance() {
     final d = distCm;
     if (d == null) return;
-    // Chỉ suy luận khi chưa nhận water_alert (giữ nếu đã có)
     if (d >= AppConfig.distEmptyCm) {
       waterAlert = WaterAlertLevel.low;
     } else if (d <= AppConfig.distFullCm) {
       waterAlert = WaterAlertLevel.full;
     } else if (waterAlert != WaterAlertLevel.ok) {
-      // hysteresis nhẹ phía app
       if (d < AppConfig.distEmptyCm - 0.6 && d > AppConfig.distFullCm + 0.6) {
         waterAlert = WaterAlertLevel.ok;
       }
@@ -256,7 +307,7 @@ class HydroProvider extends ChangeNotifier {
 
   void togglePower() {
     if (!_mqtt.isConnected) {
-      status = 'Chưa kết nối — kéo xuống để thử lại';
+      status = 'Chưa kết nối — hãy thử lại';
       notifyListeners();
       return;
     }

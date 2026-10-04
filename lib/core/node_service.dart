@@ -32,13 +32,14 @@ class NodeService {
     return [];
   }
 
-  /// Đảm bảo user có thiết bị chip 790 (thủy canh) trên MongoDB.
-  Future<Map<String, dynamic>?> ensureHydroNode() async {
+  Future<Map<String, dynamic>?> ensureHydroNode({String? chipId}) async {
     final token = await _token();
     if (token == null) return null;
+    final id = (chipId ?? AppConfig.chipId).trim();
+    if (id.isEmpty) return null;
 
     final nodes = await getNodes();
-    final existing = nodes.where((n) => '${n['chipId']}' == AppConfig.chipId);
+    final existing = nodes.where((n) => '${n['chipId']}' == id);
     if (existing.isNotEmpty) return existing.first;
 
     final res = await http
@@ -50,7 +51,7 @@ class NodeService {
           },
           body: jsonEncode({
             'name': AppConfig.deviceName,
-            'chipId': AppConfig.chipId,
+            'chipId': id,
             'templateType': 'kitchen_living',
             'state': {},
           }),
@@ -63,7 +64,7 @@ class NodeService {
     }
 
     final again = await getNodes();
-    final found = again.where((n) => '${n['chipId']}' == AppConfig.chipId);
+    final found = again.where((n) => '${n['chipId']}' == id);
     return found.isNotEmpty ? found.first : null;
   }
 

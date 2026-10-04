@@ -3,8 +3,10 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
 
 import '../core/auth_provider.dart';
+import '../core/config.dart';
 import '../core/hydro_provider.dart';
 import 'theme.dart';
+import 'widgets/feedback.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -81,9 +83,22 @@ class HomePage extends StatelessWidget {
                           children: [
                             _TopBar(
                               live: live,
-                              mqttOk: h.mqttConnected,
+                              chipId: AppConfig.chipId,
                               greetName: greet,
-                              onLogout: () => context.read<AuthProvider>().logout(),
+                              onChangeDevice: () async {
+                                context.read<HydroProvider>().disconnectChip();
+                                await context.read<AuthProvider>().clearBoundChip();
+                                if (context.mounted) {
+                                  showAppSnack(context, message: 'Nhập tên chip khác để kết nối lại');
+                                }
+                              },
+                              onLogout: () async {
+                                final hydro = context.read<HydroProvider>();
+                                final auth = context.read<AuthProvider>();
+                                hydro.disconnectChip();
+                                await auth.clearBoundChip();
+                                await auth.logout();
+                              },
                             ),
                             SizedBox(height: size.height * 0.04),
                             Text(
@@ -302,13 +317,15 @@ class HomePage extends StatelessWidget {
 class _TopBar extends StatelessWidget {
   const _TopBar({
     required this.live,
-    required this.mqttOk,
+    required this.chipId,
+    required this.onChangeDevice,
     required this.onLogout,
     this.greetName,
   });
   final bool live;
-  final bool mqttOk;
+  final String chipId;
   final String? greetName;
+  final VoidCallback onChangeDevice;
   final VoidCallback onLogout;
 
   @override
@@ -321,21 +338,18 @@ class _TopBar extends StatelessWidget {
           color: HydroTheme.leaf.withValues(alpha: 0.9),
         ),
         const SizedBox(width: 8),
-        Text(
-          'STEM IoT',
-          style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                fontSize: 12,
-                letterSpacing: 1.2,
-                color: HydroTheme.muted,
-              ),
+        Flexible(
+          child: Text(
+            'Chip $chipId',
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  fontSize: 12,
+                  letterSpacing: 0.6,
+                  color: HydroTheme.muted,
+                ),
+          ),
         ),
         const Spacer(),
-        Icon(
-          mqttOk ? Icons.wifi_rounded : Icons.wifi_off_rounded,
-          size: 16,
-          color: mqttOk ? HydroTheme.leaf : HydroTheme.muted.withValues(alpha: 0.5),
-        ),
-        const SizedBox(width: 6),
         Container(
           width: 7,
           height: 7,
@@ -351,12 +365,18 @@ class _TopBar extends StatelessWidget {
             .fade(begin: 0.45, end: 1, duration: 1200.ms),
         const SizedBox(width: 6),
         Text(
-          live ? 'Live' : 'Kết nối',
+          live ? 'Live' : 'Chờ',
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
                 color: HydroTheme.soft.withValues(alpha: 0.75),
               ),
+        ),
+        IconButton(
+          tooltip: 'Đổi chip',
+          visualDensity: VisualDensity.compact,
+          onPressed: onChangeDevice,
+          icon: const Icon(Icons.link_off_rounded, size: 20, color: HydroTheme.water),
         ),
         IconButton(
           tooltip: 'Đăng xuất',
