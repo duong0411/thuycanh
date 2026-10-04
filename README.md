@@ -70,5 +70,7 @@ WiFi portal AP: **ThuyCanh** → `http://192.168.4.1`
 - TDS → GPIO 32 (tùy chọn)  
 - HC-SR04 → TRIG 12, ECHO 13 (phân áp 5V→3.3V)  
 - OLED I2C → SDA 21, SCL 22  
-- Relay bơm → GPIO 26  
-- Relay đèn → GPIO 27  
+- **Relay 2 kênh**  
+  - IN1 (bơm) → GPIO 26  
+  - IN2 (đèn) → GPIO 27  
+  - Đèn mặc định **AUTO theo LDR**: tối (&lt;30%) bật, sáng (&gt;40%) tắt

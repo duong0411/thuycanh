@@ -1,19 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-/// STEM greenhouse: deep foliage + leaf + sunlight (không purple / cream mặc định)
+/// Greenhouse STEM: lá sâu + nước trong + nắng ấm
 class HydroTheme {
-  static const Color deep = Color(0xFF0B1F14);
-  static const Color panel = Color(0xFF143023);
-  static const Color moss = Color(0xFF1F4A34);
-  static const Color leaf = Color(0xFF3DDC97);
-  static const Color water = Color(0xFF4ECDC4);
-  static const Color sun = Color(0xFFF2C14E);
-  static const Color soft = Color(0xFFE6F5EC);
+  static const Color deep = Color(0xFF071A12);
+  static const Color panel = Color(0xFF12281C);
+  static const Color moss = Color(0xFF1B3D2A);
+  static const Color leaf = Color(0xFF4ADE80);
+  static const Color water = Color(0xFF2DD4BF);
+  static const Color sun = Color(0xFFFBBF24);
+  static const Color soft = Color(0xFFECFDF5);
+  static const Color muted = Color(0xFF94B8A6);
+  static const Color warn = Color(0xFFFB923C);
 
   static ThemeData dark() {
     final display = GoogleFonts.frauncesTextTheme();
-    final body = GoogleFonts.sourceSans3TextTheme();
+    final body = GoogleFonts.manropeTextTheme();
 
     return ThemeData(
       useMaterial3: true,
@@ -21,33 +23,38 @@ class HydroTheme {
       scaffoldBackgroundColor: deep,
       colorScheme: const ColorScheme.dark(
         primary: leaf,
-        secondary: sun,
+        secondary: water,
+        tertiary: sun,
         surface: panel,
         onPrimary: deep,
         onSecondary: deep,
         onSurface: soft,
+        error: warn,
       ),
       textTheme: body.copyWith(
         displayLarge: display.displayLarge?.copyWith(
           color: soft,
           fontWeight: FontWeight.w700,
-          letterSpacing: -1.2,
+          letterSpacing: -1.6,
+          height: 0.95,
         ),
         displayMedium: display.displayMedium?.copyWith(
           color: soft,
           fontWeight: FontWeight.w700,
-          letterSpacing: -0.8,
+          letterSpacing: -1.2,
+          height: 0.98,
         ),
         headlineMedium: display.headlineMedium?.copyWith(
           color: soft,
           fontWeight: FontWeight.w700,
         ),
-        titleLarge: display.titleLarge?.copyWith(
+        titleLarge: body.titleLarge?.copyWith(
           color: soft,
           fontWeight: FontWeight.w700,
+          letterSpacing: -0.2,
         ),
-        bodyLarge: body.bodyLarge?.copyWith(color: soft),
-        bodyMedium: body.bodyMedium?.copyWith(color: soft.withValues(alpha: 0.88)),
+        bodyLarge: body.bodyLarge?.copyWith(color: soft, height: 1.4),
+        bodyMedium: body.bodyMedium?.copyWith(color: muted, height: 1.35),
         labelLarge: body.labelLarge?.copyWith(
           color: soft,
           fontWeight: FontWeight.w700,

@@ -25,8 +25,14 @@
  *   TDS       -> GPIO 32 (analog, tùy chọn)
  *   HC-SR04   -> TRIG GPIO 12, ECHO GPIO 13
  *   OLED I2C  -> SDA GPIO 21, SCL GPIO 22
- *   Relay bơm -> GPIO 26
- *   Relay đèn -> GPIO 27
+ *
+ * RELAY 2 KÊNH (điều khiển bơm + đèn):
+ *   IN1 (kênh 1 - BƠM)  -> GPIO 26
+ *   IN2 (kênh 2 - ĐÈN)  -> GPIO 27
+ *   VCC module          -> 5V (hoặc 3.3V tùy module)
+ *   GND                 -> GND chung ESP32
+ *   COM/NO mỗi kênh cấp nguồn riêng cho bơm 5V / đèn trồng
+ *   Đèn: chế độ AUTO theo LDR (tối -> bật, sáng -> tắt)
  *
  * LƯU Ý ĐIỆN ÁP:
  *   - ECHO HC-SR04 = 5V -> cầu phân áp (1k + 2k) trước GPIO 13
@@ -56,8 +62,9 @@
 #define PIN_TDS       32
 #define PIN_TRIG      12
 #define PIN_ECHO      13
-#define PIN_PUMP      26
-#define PIN_LIGHT     27
+// Relay 2 kênh: IN1 = bơm, IN2 = đèn
+#define PIN_PUMP      26   // Relay CH1 -> bơm tuần hoàn
+#define PIN_LIGHT     27   // Relay CH2 -> đèn trồng
 #define PIN_BOOT_BTN  0
 #define BOOT_HOLD_MS  3000
 
@@ -97,7 +104,8 @@ const byte DNS_PORT = 53;
 #define RECONNECT_MS  10000
 #define READ_MS       2000
 
-// Relay: đa số module kích mức THẤP (LOW = bật)
+// Relay 2 kênh: đa số module kích mức THẤP (LOW = bật relay)
+// Nếu module của bạn kích mức CAO (HIGH = bật) thì đổi thành true
 const bool RELAY_ACTIVE_HIGH = false;
 #define ENABLE_TDS    false
 
@@ -119,7 +127,9 @@ const float KF_R = 1.0f;
 const float KF_OUTLIER_CM = 3.5f;
 const float KF_REJECT_CM  = 8.0f;
 
-const int LIGHT_ON_BELOW_PCT = 30;
+// Đèn AUTO theo LDR (% ánh sáng). Tối hơn ngưỡng -> bật đèn trồng
+const int LIGHT_ON_BELOW_PCT  = 30;  // < 30%  -> bật đèn
+const int LIGHT_OFF_ABOVE_PCT = 40;  // > 40%  -> tắt đèn (hysteresis chống nhấp)
 
 // Hiệu chuẩn pH
 const float PH_DIVIDER   = 1.0f;
@@ -328,6 +338,8 @@ float readPH() {
 }
 
 int readLightPercent() {
+  // LDR module: thường tối = ADC cao. Nếu bị ngược (đèn luôn sai), đảo map:
+  // return constrain(map(raw, 0, 4095, 0, 100), 0, 100);
   int raw = (int)readAnalogAvg(PIN_LDR);
   return constrain(map(raw, 4095, 0, 0, 100), 0, 100);
 }
@@ -380,22 +392,24 @@ void updateActuators() {
     else wantPump = true;  // mức trung bình: vẫn tuần hoàn
   }
   pumpOn = wantPump;
-  setRelay(PIN_PUMP, pumpOn);
+  setRelay(PIN_PUMP, pumpOn);   // Relay CH1
 
+  // --- Đèn (Relay CH2): mặc định AUTO theo cảm biến ánh sáng LDR ---
   bool wantLight;
   if (!systemEnabled) {
     wantLight = false;
   } else if (lightMode == HC_ON) {
-    wantLight = true;
+    wantLight = true;           // ép bật từ app
   } else if (lightMode == HC_OFF) {
-    wantLight = false;
+    wantLight = false;          // ép tắt từ app
   } else {
-    if (hcLightPct < LIGHT_ON_BELOW_PCT) wantLight = true;
-    else if (hcLightPct > LIGHT_ON_BELOW_PCT + 10) wantLight = false;
-    else wantLight = lightOn;
+    // HC_AUTO: tối -> bật đèn trồng, đủ sáng -> tắt
+    if (hcLightPct < LIGHT_ON_BELOW_PCT)       wantLight = true;
+    else if (hcLightPct > LIGHT_OFF_ABOVE_PCT) wantLight = false;
+    else                                       wantLight = lightOn;  // hysteresis
   }
   lightOn = wantLight;
-  setRelay(PIN_LIGHT, lightOn);
+  setRelay(PIN_LIGHT, lightOn); // Relay CH2
 
   updateStatusMsg();
 }
@@ -477,12 +491,13 @@ void drawOLED() {
   else if (waterAlert == WA_LOW) oled.print("THAP");
   else oled.print("OK");
 
-  // Dong 4: Bom + Den
+  // Dong 4: Relay CH1 bom + CH2 den (AUTO theo LDR)
   oled.setCursor(0, 32);
   oled.print("Bom:");
   oled.print(pumpOn ? "ON " : "OFF");
   oled.print(" Den:");
   oled.print(lightOn ? "ON" : "OFF");
+  if (lightMode == HC_AUTO) oled.print("*");  // * = dang AUTO theo anh sang
 
   // Dong 5: He thong + WiFi
   oled.setCursor(0, 40);
