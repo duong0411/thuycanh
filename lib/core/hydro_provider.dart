@@ -7,12 +7,15 @@ import 'mqtt_service.dart';
 
 enum WaterAlertLevel { ok, full, low }
 
+typedef TelemetrySync = Future<void> Function(Map<String, dynamic> state);
+
 /// Provider riêng cho thủy canh — không dùng biến của máy Ngưng Tụ.
 class HydroProvider extends ChangeNotifier {
   HydroProvider({MqttService? mqtt}) : _mqtt = mqtt ?? MqttService();
 
   final MqttService _mqtt;
   StreamSubscription? _sub;
+  TelemetrySync? onTelemetry;
 
   bool connecting = false;
   bool online = false;
@@ -147,6 +150,24 @@ class HydroProvider extends ChangeNotifier {
 
     lastUpdate = DateTime.now();
     notifyListeners();
+
+    if (hasTelemetry && onTelemetry != null) {
+      onTelemetry!({
+        'temperature': temperature,
+        'humidity': humidity,
+        'ph': ph,
+        'tds': tds,
+        'water': waterPct,
+        'dist': distCm,
+        'light': lightPct,
+        'pump': pumpOn,
+        'lamp': lampOn,
+        'power': powerOn,
+        'status': status,
+        'waterAlert': waterAlert.name,
+        'chipId': AppConfig.chipId,
+      });
+    }
   }
 
   void _inferAlertFromDistance() {

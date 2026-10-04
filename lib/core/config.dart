@@ -1,8 +1,10 @@
-/// Cấu hình MQTT AloT — chipId 790 (KHÔNG trùng 789 máy Ngưng Tụ)
+/// Cấu hình MQTT + API AloT — chipId 790 (KHÔNG trùng 789 máy Ngưng Tụ)
 class AppConfig {
+  static const String apiBaseUrl = 'https://duynguyen.io.vn/api';
   static const String brokerUrl = 'wss://mqtt.duynguyen.io.vn/mqtt';
   static const String chipId = '790';
   static const String deviceName = 'Thủy Canh IoT STEM';
+
 
   static const String topicOnline = 'tele/$chipId/status';
   static const String topicTemp = 'tele/${chipId}_temp/status';

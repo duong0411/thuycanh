@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
 
+import '../core/auth_provider.dart';
 import '../core/hydro_provider.dart';
 import 'theme.dart';
 
@@ -11,9 +12,13 @@ class HomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final h = context.watch<HydroProvider>();
+    final auth = context.watch<AuthProvider>();
     final size = MediaQuery.sizeOf(context);
     final live = h.mqttConnected && h.hasTelemetry;
     final waterFrac = ((h.waterPct ?? 0) / 100).clamp(0.0, 1.0);
+    final greet = auth.user?.name.isNotEmpty == true
+        ? auth.user!.name.split(' ').last
+        : null;
 
     return Scaffold(
       body: Container(
@@ -74,8 +79,13 @@ class HomePage extends StatelessWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            _TopBar(live: live, mqttOk: h.mqttConnected),
-                            SizedBox(height: size.height * 0.045),
+                            _TopBar(
+                              live: live,
+                              mqttOk: h.mqttConnected,
+                              greetName: greet,
+                              onLogout: () => context.read<AuthProvider>().logout(),
+                            ),
+                            SizedBox(height: size.height * 0.04),
                             Text(
                               'THỦY CANH',
                               style: Theme.of(context).textTheme.displayMedium?.copyWith(
@@ -87,7 +97,9 @@ class HomePage extends StatelessWidget {
                                 .slideY(begin: 0.1, curve: Curves.easeOutCubic),
                             const SizedBox(height: 10),
                             Text(
-                              'Nuôi cây sạch — theo dõi dinh dưỡng realtime',
+                              greet != null
+                                  ? 'Xin chào $greet — theo dõi dinh dưỡng realtime'
+                                  : 'Nuôi cây sạch — theo dõi dinh dưỡng realtime',
                               style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                                     color: HydroTheme.water.withValues(alpha: 0.92),
                                     fontSize: 16,
@@ -288,9 +300,16 @@ class HomePage extends StatelessWidget {
 }
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.live, required this.mqttOk});
+  const _TopBar({
+    required this.live,
+    required this.mqttOk,
+    required this.onLogout,
+    this.greetName,
+  });
   final bool live;
   final bool mqttOk;
+  final String? greetName;
+  final VoidCallback onLogout;
 
   @override
   Widget build(BuildContext context) {
@@ -338,6 +357,12 @@ class _TopBar extends StatelessWidget {
                 fontWeight: FontWeight.w600,
                 color: HydroTheme.soft.withValues(alpha: 0.75),
               ),
+        ),
+        IconButton(
+          tooltip: 'Đăng xuất',
+          visualDensity: VisualDensity.compact,
+          onPressed: onLogout,
+          icon: Icon(Icons.logout_rounded, size: 20, color: HydroTheme.soft.withValues(alpha: 0.7)),
         ),
       ],
     );

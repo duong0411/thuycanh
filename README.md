@@ -13,12 +13,18 @@ Mỗi push lên `main` sẽ build:
 
 Xem tab **Actions** → artifact, hoặc **Releases**.
 
+## Auth
+
+Đăng nhập / đăng ký qua backend AloT (`https://duynguyen.io.vn/api`).  
+UI **không hỏi số điện thoại** — app tự sinh SĐT ngẫu nhiên khi đăng ký để lọt validation backend.
+
 ## Chạy local
 
 ```bash
 flutter pub get
 flutter run
 ```
+
 
 ## Chip ID
 
