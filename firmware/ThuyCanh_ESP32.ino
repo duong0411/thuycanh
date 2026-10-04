@@ -3,7 +3,7 @@
  * ║     THỦY CANH IoT — STEM (ESP32) + MQTT APP (AloT WSS)      ║
  * ╠══════════════════════════════════════════════════════════════╣
  * ║  ✅ DHT22 + LDR + pH + HC-SR04 (+ TDS tùy chọn)             ║
- * ║  ✅ OLED SSD1306 + Relay bơm / đèn                          ║
+ * ║  ✅ TFT IPS 0.96" 80x160 ST7735 SPI + Relay bơm / đèn       ║
  * ║  ✅ Mực nước: 11cm=ĐẦY / 18cm=THẤP + Kalman 1D HC-SR04   ║
  * ║  ✅ WiFi Portal AP tĩnh 192.168.4.1 (lưu tối đa 5 mạng)    ║
  * ║  ✅ MQTT qua WebSockets SSL (WSS Port 443 Cloudflare)       ║
@@ -14,7 +14,7 @@
  * 1. WebSockets by Markus Sattler
  * 2. MQTTPubSubClient by Hideaki Tai
  * 3. DHT sensor library (Adafruit) + Adafruit Unified Sensor
- * 4. Adafruit SSD1306 + Adafruit GFX
+ * 4. Adafruit GFX + Adafruit ST7735 and ST7789 Library
  *
  * APP: mở folder thuycanh/ — chipId = 790 (KHÔNG dùng 789 của máy Ngưng Tụ)
  *
@@ -24,7 +24,17 @@
  *   pH        -> GPIO 35 (analog)
  *   TDS       -> GPIO 32 (analog, tùy chọn)
  *   HC-SR04   -> TRIG GPIO 12, ECHO GPIO 13
- *   OLED I2C  -> SDA GPIO 21, SCL GPIO 22
+ *
+ * TFT IPS 0.96" 80x160 (SPI — chân ghi SCL/SDA nhưng là SPI, KHÔNG phải I2C):
+ *   GND  -> GND
+ *   VCC  -> 3.3V
+ *   SCL  -> GPIO 22   (SPI SCK)  << giữ như đã hàn OLED cũ
+ *   SDA  -> GPIO 21   (SPI MOSI) << giữ như đã hàn OLED cũ
+ *   RES  -> GPIO 17
+ *   DC   -> GPIO 18   << BẮT BUỘC GPIO (không nối GND)
+ *   CS   -> GND       << nối GND cứng (không dùng GPIO ESP32)
+ *   BLK  -> 3.3V      << nối 3.3V cứng (đèn nền luôn sáng, không dùng GPIO)
+ *   (Không dùng GPIO cho CS / BLK)
  *
  * RELAY 2 KÊNH (điều khiển bơm + đèn):
  *   IN1 (kênh 1 - BƠM)  -> GPIO 26
@@ -45,13 +55,31 @@
 #include <EEPROM.h>
 #include <WebSocketsClient.h>
 #include <MQTTPubSubClient.h>
-#include <Wire.h>
+#include <SPI.h>
 #include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
+#include <Adafruit_ST7735.h>
 #include <DHT.h>
 #include <esp_system.h>
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
+
+// Một số module IPS cần invert / init khác — thử lần lượt nếu màu/offset lệch
+// 0 = INITR_MINI160x80  |  1 = INITR_MINI160x80_PLUGIN  |  2 = INITR_BLACKTAB
+#define TFT_INIT_MODE   0
+#define TFT_INVERT      1   // IPS hay bị âm màu → để 1; nếu màu đúng thì đổi 0
+
+// ─────────────────────────────────────────────────────────────
+//  DEBUG Serial (115200) — đặt 0 để tắt log chi tiết
+// ─────────────────────────────────────────────────────────────
+#define DEBUG_SERIAL  1
+
+#if DEBUG_SERIAL
+  #define DBG(...)       Serial.printf(__VA_ARGS__)
+  #define DBG_LN(msg)    Serial.println(msg)
+#else
+  #define DBG(...)       do {} while (0)
+  #define DBG_LN(msg)    do {} while (0)
+#endif
 
 // ─────────────────────────────────────────────────────────────
 //  CHÂN PHẦN CỨNG THỦY CANH
@@ -67,6 +95,17 @@
 #define PIN_LIGHT     27   // Relay CH2 -> đèn trồng
 #define PIN_BOOT_BTN  0
 #define BOOT_HOLD_MS  3000
+
+// TFT ST7735 SPI 80x160 (xoay ngang → 160x80)
+// SCL/SDA giữ GPIO 22/21 như đã hàn trước (bit-bang SPI)
+#define TFT_SCLK      22   // SCL trên module
+#define TFT_MOSI      21   // SDA trên module (MOSI)
+#define TFT_RST       17   // RES
+#define TFT_DC        18   // bắt buộc GPIO
+#define TFT_CS        -1   // CS hàn sang GND — không chiếm GPIO
+// BLK: hàn sang 3.3V (luôn sáng) — không định nghĩa GPIO
+#define TFT_W        160
+#define TFT_H         80
 
 // ─────────────────────────────────────────────────────────────
 //  WIFI PORTAL
@@ -138,8 +177,8 @@ const float PH_VOLT_AT_4 = 3.05f;
 const float PH_LOW = 5.5f, PH_HIGH = 6.5f;
 
 struct WifiEntry {
-  char ssid[32];
-  char pass[32];
+  char ssid[33];
+  char pass[65];  // WPA tối đa 63 ký tự — trước đây pass[32] dễ cắt mật khẩu → connect fail
 };
 WifiEntry wifiList[MAX_WIFI];
 int wifiCount = 0;
@@ -147,7 +186,8 @@ int wifiCount = 0;
 // ─────────────────────────────────────────────────────────────
 //  ĐỐI TƯỢNG
 // ─────────────────────────────────────────────────────────────
-Adafruit_SSD1306 oled(128, 64, &Wire, -1);
+// CS = -1 khi chân CS module đã nối GND
+Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
 DHT dht(PIN_DHT, DHT22);
 WebServer webServer(80);
 DNSServer dnsServer;
@@ -177,7 +217,7 @@ HcMode lightMode = HC_AUTO;
 WaterAlert waterAlert = WA_OK;
 bool pumpOn = false, lightOn = false;
 bool systemEnabled = true;
-bool oledOK = false;
+bool tftOK = false;
 
 unsigned long tRead = 0;
 const char* statusMsg = "Khoi dong";
@@ -186,11 +226,15 @@ const char* statusMsg = "Khoi dong";
 //  BIẾN WIFI / MQTT
 // ─────────────────────────────────────────────────────────────
 bool portalActive = false;
+bool pendingStaConnect = false;
+char pendingSsid[33] = {0};
+char pendingPass[65] = {0};
+unsigned long pendingStaAt = 0;
 unsigned long lastTelemetry = 0;
 unsigned long lastHeartbeat = 0;
 unsigned long lastReconnect = 0;
 unsigned long lastMqttRetry = 0;
-unsigned long lastOled = 0;
+unsigned long lastTft = 0;
 bool wssReady = false;
 bool mqttLoggedOk = false;
 int wifiRetries = 0;
@@ -206,6 +250,7 @@ bool isDoubleReset = false;
 //  TIỆN ÍCH RELAY / ADC
 // ─────────────────────────────────────────────────────────────
 void setRelay(uint8_t pin, bool on) {
+  // Không spam Serial mỗi chu kỳ — log khi đổi trạng thái ở updateActuators()
   digitalWrite(pin, (on == RELAY_ACTIVE_HIGH) ? HIGH : LOW);
 }
 
@@ -232,11 +277,17 @@ float readDistanceRawCm() {
   digitalWrite(PIN_TRIG, LOW);
 
   unsigned long dur = pulseIn(PIN_ECHO, HIGH, ECHO_TIMEOUT_US);
-  if (dur == 0) return -1.0f;
+  if (dur == 0) {
+    DBG("[HC-SR04] echo timeout\n");
+    return -1.0f;
+  }
 
   // cm = us * 0.0343 / 2  (tránh chia float chậm hơn nhân)
   float cm = dur * 0.01715f;
-  if (cm < DIST_MIN_CM || cm > DIST_MAX_CM) return -1.0f;
+  if (cm < DIST_MIN_CM || cm > DIST_MAX_CM) {
+    DBG("[HC-SR04] ngoai dai: %.1f cm (dur=%lu us)\n", cm, dur);
+    return -1.0f;
+  }
   return cm;
 }
 
@@ -264,6 +315,7 @@ float distKalmanUpdate(float z) {
 
   // Spike lớn: bỏ mẫu, giữ ước lượng (nhanh + ổn định ngưỡng 11/18)
   if (innov > KF_REJECT_CM || innov < -KF_REJECT_CM) {
+    DBG("[KF] REJECT z=%.1f x=%.1f innov=%.1f\n", z, distKf.x, innov);
     return distKf.x;
   }
 
@@ -271,6 +323,7 @@ float distKalmanUpdate(float z) {
   float R = KF_R;
   if (innov > KF_OUTLIER_CM || innov < -KF_OUTLIER_CM) {
     R = KF_R * 6.0f;
+    DBG("[KF] soft-outlier innov=%.1f R=%.1f\n", innov, R);
   }
 
   float K = distKf.P / (distKf.P + R);
@@ -279,6 +332,7 @@ float distKalmanUpdate(float z) {
   // giữ P trong biên nhỏ để tránh số học lệch lâu dài
   if (distKf.P < 0.01f) distKf.P = 0.01f;
   if (distKf.P > 10.0f) distKf.P = 10.0f;
+  DBG("[KF] z=%.1f -> x=%.1f K=%.2f P=%.2f\n", z, distKf.x, K, distKf.P);
   return distKf.x;
 }
 
@@ -299,13 +353,17 @@ float readDistanceFilteredCm() {
     if (i + 1 < DIST_BURST_N) delay(DIST_BURST_GAP_MS);
   }
 
-  if (n == 0) return -1.0f;
+  if (n == 0) {
+    DBG("[HC-SR04] khong co mau hop le (burst=%u)\n", DIST_BURST_N);
+    return -1.0f;
+  }
 
   float z;
   if (n == 1) z = s0;
   else if (n == 2) z = 0.5f * (s0 + s1);
   else z = median3(s0, s1, s2);
 
+  DBG("[HC-SR04] n=%u raw=[%.1f %.1f %.1f] z=%.1f\n", n, s0, s1, s2, z);
   return distKalmanUpdate(z);
 }
 
@@ -317,6 +375,7 @@ float distanceToPercent(float dCm) {
 // Cập nhật mức nước + cảnh báo FULL/LOW (có hysteresis)
 void updateWaterLevel(float dCm) {
   if (dCm < 0) return;
+  WaterAlert prev = waterAlert;
   hcDistCm = dCm;
   hcWaterPct = distanceToPercent(dCm);
 
@@ -328,6 +387,14 @@ void updateWaterLevel(float dCm) {
 
   if (waterAlert != WA_FULL && dCm <= DIST_FULL_CM) waterAlert = WA_FULL;
   if (waterAlert != WA_LOW && dCm >= DIST_EMPTY_CM) waterAlert = WA_LOW;
+
+  const char* alName = (waterAlert == WA_FULL) ? "FULL" :
+                       (waterAlert == WA_LOW)  ? "LOW"  : "OK";
+  DBG("[WATER] dist=%.1fcm pct=%.0f%% alert=%s (full<=%.0f empty>=%.0f)\n",
+      hcDistCm, hcWaterPct, alName, DIST_FULL_CM, DIST_EMPTY_CM);
+  if (prev != waterAlert) {
+    DBG("[WATER] *** ALERT DOI: %d -> %d (%s)\n", (int)prev, (int)waterAlert, alName);
+  }
 }
 
 float readPH() {
@@ -374,6 +441,9 @@ void updateStatusMsg() {
 }
 
 void updateActuators() {
+  bool prevPump = pumpOn;
+  bool prevLight = lightOn;
+
   // --- Bơm: AUTO theo cảm biến khoảng cách ---
   // FULL (≤11cm): bơm tuần hoàn ON
   // LOW  (≥18cm): tắt bơm + cảnh báo đổ nước từ ngoài
@@ -412,6 +482,13 @@ void updateActuators() {
   setRelay(PIN_LIGHT, lightOn); // Relay CH2
 
   updateStatusMsg();
+
+  if (prevPump != pumpOn || prevLight != lightOn) {
+    DBG("[ACT] *** DOI TRANG THAI  Bom %s->%s (mode=%d)  Den %s->%s (mode=%d LDR=%d%%)  Sys=%d\n",
+        prevPump ? "ON" : "OFF", pumpOn ? "ON" : "OFF", (int)pumpMode,
+        prevLight ? "ON" : "OFF", lightOn ? "ON" : "OFF", (int)lightMode, hcLightPct,
+        (int)systemEnabled);
+  }
 }
 
 void readSensors() {
@@ -422,106 +499,76 @@ void readSensors() {
   float h = dht.readHumidity();
   if (!isnan(t)) hcTemp = t;
   if (!isnan(h)) hcHum = h;
+  else DBG("[DHT] doc loi (nan)\n");
 
   hcPh = readPH();
   hcLightPct = readLightPercent();
 
   float d = readDistanceFilteredCm();
   if (d > 0.0f) updateWaterLevel(d);
+  else DBG("[WATER] giu gia tri cu dist=%.1f pct=%.0f\n", hcDistCm, hcWaterPct);
 
   // Doc TDS de hien OLED/MQTT (neu co cam bien)
   if (ENABLE_TDS) hcTds = readTDS(hcTemp);
 
+  DBG("[SENSOR] T=%.1f H=%.0f pH=%.2f TDS=%.0f Light=%d%% Dist=%.1fcm Water=%.0f%% heap=%u\n",
+      hcTemp, hcHum, hcPh, hcTds, hcLightPct, hcDistCm, hcWaterPct, ESP.getFreeHeap());
+
   if (!portalActive) updateActuators();
 }
 
+// Vẽ 1 dòng cố định độ rộng + nền đen → không nhấp nháy (không fillScreen)
+static void tftLine(int16_t y, uint16_t color, const char* text) {
+  tft.setTextColor(color, ST77XX_BLACK);
+  tft.setCursor(2, y);
+  tft.print(text);
+}
+
 void drawOLED() {
-  if (!oledOK) return;
-  if (millis() - lastOled < 400) return;
-  lastOled = millis();
+  if (!tftOK) return;
+  if (millis() - lastTft < 1000) return;  // cập nhật 1s, mượt hơn
+  lastTft = millis();
 
-  oled.clearDisplay();
-  oled.setTextSize(1);
-  oled.setTextColor(SSD1306_WHITE);
+  tft.setTextSize(1);
+  tft.setTextWrap(false);
 
-  if (portalActive) {
-    oled.setCursor(0, 0);  oled.println("CAU HINH MANG");
-    oled.setCursor(0, 14); oled.println("Ket noi: ThuyCanh");
-    oled.setCursor(0, 28); oled.println("Mo: 192.168.4.1");
-    oled.setCursor(0, 48); oled.printf("Da luu: %d mang", wifiCount);
-    oled.display();
-    return;
+  char line[28];
+
+  if (isnan(hcTemp) || isnan(hcHum))
+    snprintf(line, sizeof(line), "Temp: --.-C  Hum: --%%   ");
+  else
+    snprintf(line, sizeof(line), "Temp:%5.1fC  Hum:%3.0f%%  ", hcTemp, hcHum);
+  tftLine(4, ST77XX_CYAN, line);
+
+  if (isnan(hcPh))
+    snprintf(line, sizeof(line), "pH: --.--   Light: %3d%%  ", hcLightPct);
+  else
+    snprintf(line, sizeof(line), "pH: %5.2f   Light: %3d%%  ", hcPh, hcLightPct);
+  tftLine(18, ST77XX_GREEN, line);
+
+  if (isnan(hcDistCm))
+    snprintf(line, sizeof(line), "Dist: --.-cm  Water: --%% ");
+  else
+    snprintf(line, sizeof(line), "Dist:%5.1fcm  Water:%3.0f%% ", hcDistCm, hcWaterPct);
+  tftLine(32, ST77XX_YELLOW, line);
+
+  if (ENABLE_TDS) {
+    if (isnan(hcTds))
+      snprintf(line, sizeof(line), "TDS: ---- ppm            ");
+    else
+      snprintf(line, sizeof(line), "TDS: %4.0f ppm            ", hcTds);
+    tftLine(46, ST77XX_WHITE, line);
+  } else {
+    snprintf(line, sizeof(line), "Water alert: %-4s        ",
+             waterAlert == WA_FULL ? "DAY" : (waterAlert == WA_LOW ? "LOW" : "OK"));
+    tftLine(46, waterAlert == WA_LOW ? ST77XX_RED
+                  : (waterAlert == WA_FULL ? ST77XX_BLUE : ST77XX_WHITE), line);
   }
 
-  // 128x64 — 8 dong x 8px: hien thi day du cam bien de theo doi
-  // Dong 0: Nhiet do + Do am
-  oled.setCursor(0, 0);
-  oled.print("T:");
-  if (isnan(hcTemp)) oled.print("--.-");
-  else oled.print(hcTemp, 1);
-  oled.print("C H:");
-  if (isnan(hcHum)) oled.print("--");
-  else oled.print(hcHum, 0);
-  oled.print("%");
+  // dòng trống cố định — xóa chữ cũ nếu từng hiện trạng thái
+  tftLine(60, ST77XX_BLACK, "                        ");
 
-  // Dong 1: pH + TDS
-  oled.setCursor(0, 8);
-  oled.print("pH:");
-  if (isnan(hcPh)) oled.print("--.-");
-  else oled.print(hcPh, 2);
-  oled.print(" TDS:");
-  if (ENABLE_TDS) oled.print(hcTds, 0);
-  else oled.print("--");
-
-  // Dong 2: Khoang cach + % muc nuoc
-  oled.setCursor(0, 16);
-  oled.print("Dist:");
-  if (isnan(hcDistCm)) oled.print("--.-");
-  else oled.print(hcDistCm, 1);
-  oled.print("cm ");
-  oled.print(hcWaterPct, 0);
-  oled.print("%");
-
-  // Dong 3: Anh sang + canh bao muc nuoc
-  oled.setCursor(0, 24);
-  oled.print("Light:");
-  oled.print(hcLightPct);
-  oled.print("% ");
-  if (waterAlert == WA_FULL) oled.print("DAY");
-  else if (waterAlert == WA_LOW) oled.print("THAP");
-  else oled.print("OK");
-
-  // Dong 4: Relay CH1 bom + CH2 den (AUTO theo LDR)
-  oled.setCursor(0, 32);
-  oled.print("Bom:");
-  oled.print(pumpOn ? "ON " : "OFF");
-  oled.print(" Den:");
-  oled.print(lightOn ? "ON" : "OFF");
-  if (lightMode == HC_AUTO) oled.print("*");  // * = dang AUTO theo anh sang
-
-  // Dong 5: He thong + WiFi
-  oled.setCursor(0, 40);
-  oled.print("Sys:");
-  oled.print(systemEnabled ? "ON " : "OFF");
-  oled.print(" WiFi:");
-  oled.print(WiFi.status() == WL_CONNECTED ? "OK" : "--");
-
-  // Dong 6-7: trang thai (2 dong neu dai)
-  oled.setCursor(0, 48);
-  oled.print("St:");
-  // rut gon cho vua man hinh
-  if (waterAlert == WA_LOW) oled.print("BOM NUOC NGOAI");
-  else if (waterAlert == WA_FULL) oled.print("NUOC DAY-BOM ON");
-  else if (!systemEnabled) oled.print("TAT TU APP");
-  else if (!isnan(hcPh) && (hcPh < PH_LOW || hcPh > PH_HIGH)) oled.print("pH LECH");
-  else oled.print("HOAT DONG TOT");
-
-  oled.setCursor(0, 56);
-  oled.print("MQTT:");
-  oled.print(mqttClient.isConnected() ? "OK" : "--");
-  oled.print(" ID:790");
-
-  oled.display();
+  DBG("[TFT] sensor T=%.1f Dist=%.1f\n", hcTemp, hcDistCm);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -554,66 +601,108 @@ void loadWifiList() {
 void addOrUpdateWifi(const String& ssid, const String& pass) {
   for (int i = 0; i < wifiCount; i++) {
     if (ssid == wifiList[i].ssid) {
-      pass.toCharArray(wifiList[i].pass, 32);
+      pass.toCharArray(wifiList[i].pass, sizeof(wifiList[i].pass));
       saveWifiList();
       return;
     }
   }
   if (wifiCount < MAX_WIFI) {
-    ssid.toCharArray(wifiList[wifiCount].ssid, 32);
-    pass.toCharArray(wifiList[wifiCount].pass, 32);
+    ssid.toCharArray(wifiList[wifiCount].ssid, sizeof(wifiList[wifiCount].ssid));
+    pass.toCharArray(wifiList[wifiCount].pass, sizeof(wifiList[wifiCount].pass));
     wifiCount++;
   } else {
     for (int i = 0; i < MAX_WIFI - 1; i++) wifiList[i] = wifiList[i + 1];
-    ssid.toCharArray(wifiList[MAX_WIFI - 1].ssid, 32);
-    pass.toCharArray(wifiList[MAX_WIFI - 1].pass, 32);
+    ssid.toCharArray(wifiList[MAX_WIFI - 1].ssid, sizeof(wifiList[MAX_WIFI - 1].ssid));
+    pass.toCharArray(wifiList[MAX_WIFI - 1].pass, sizeof(wifiList[MAX_WIFI - 1].pass));
   }
   saveWifiList();
 }
 
-bool connectBestWifi() {
-  if (wifiCount <= 0) return false;
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect(true);
-  delay(100);
-
-  int bestIdx = -1;
-  int bestRSSI = -999;
-  int n = WiFi.scanNetworks();
-  if (n > 0) {
-    for (int i = 0; i < n; i++) {
-      for (int w = 0; w < wifiCount; w++) {
-        if (WiFi.SSID(i) == String(wifiList[w].ssid) && WiFi.RSSI(i) > bestRSSI) {
-          bestRSSI = WiFi.RSSI(i);
-          bestIdx = w;
-        }
-      }
+// Chờ STA — poll 100ms (không delay 500ms)
+bool waitWifiConnected(uint16_t maxMs = 12000) {
+  const uint16_t step = 100;
+  uint16_t waited = 0;
+  while (waited < maxMs) {
+    wl_status_t st = WiFi.status();
+    if (st == WL_CONNECTED) return true;
+    // Sai mật khẩu / không thấy AP → thoát sớm, đừng chờ đủ maxMs
+    if (st == WL_CONNECT_FAILED || st == WL_NO_SSID_AVAIL) {
+      Serial.printf("\n[WiFi] fail status=%d\n", (int)st);
+      return false;
     }
-    WiFi.scanDelete();
+    delay(step);
+    waited += step;
+    if ((waited % 500) == 0) Serial.print(".");
   }
-  if (bestIdx < 0) bestIdx = wifiCount - 1;
+  return WiFi.status() == WL_CONNECTED;
+}
 
-  Serial.printf("Dang ket noi: %s\n", wifiList[bestIdx].ssid);
-  WiFi.begin(wifiList[bestIdx].ssid, wifiList[bestIdx].pass);
-  for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) {
-    delay(500);
-    Serial.print(".");
-  }
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi OK! IP: " + WiFi.localIP().toString());
+bool tryWifiCreds(const char* ssid, const char* pass) {
+  Serial.printf("[WiFi] STA begin '%s'\n", ssid);
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.disconnect(true);
+  delay(200);
+  WiFi.begin(ssid, pass);
+  if (waitWifiConnected(12000)) {
+    Serial.println("\n[WiFi] OK IP: " + WiFi.localIP().toString());
     return true;
   }
-  Serial.println("\nKet noi WiFi that bai!");
+  Serial.printf("\n[WiFi] FAIL status=%d\n", (int)WiFi.status());
+  WiFi.disconnect(true);
   return false;
+}
+
+bool connectBestWifi() {
+  if (wifiCount <= 0) return false;
+
+  // Ưu tiên mạng mới nhất (vừa lưu từ portal) — bỏ scan
+  int last = wifiCount - 1;
+  if (tryWifiCreds(wifiList[last].ssid, wifiList[last].pass)) return true;
+
+  // Thử các mạng còn lại
+  for (int w = last - 1; w >= 0; w--) {
+    if (tryWifiCreds(wifiList[w].ssid, wifiList[w].pass)) return true;
+  }
+  return false;
+}
+
+// Forward declare — processPendingStaConnect gọi lại portal khi STA fail
+void startPortal();
+
+void processPendingStaConnect() {
+  if (!pendingStaConnect || millis() < pendingStaAt) return;
+  pendingStaConnect = false;
+
+  Serial.printf("[PORTAL] Dung AP, thu STA '%s'...\n", pendingSsid);
+  dnsServer.stop();
+  webServer.stop();
+  WiFi.softAPdisconnect(true);
+  delay(250);
+
+  if (tryWifiCreds(pendingSsid, pendingPass)) {
+    Serial.println("[PORTAL] STA OK — restart sang che do binh thuong");
+    delay(300);
+    ESP.restart();
+    return;
+  }
+
+  Serial.println("[PORTAL] STA FAIL — mo lai AP de thu lai");
+  startPortal();
 }
 
 // ─────────────────────────────────────────────────────────────
 //  MQTT (giống NgungTu / AloT)
 // ─────────────────────────────────────────────────────────────
 void mqttPub(const char* device, const String& payload, bool retain = true) {
-  if (!mqttClient.isConnected()) return;
+  if (!mqttClient.isConnected()) {
+    DBG("[MQTT] PUB skip (chua ket noi): %s\n", device);
+    return;
+  }
   String topic = "tele/" + String(device) + "/status";
-  mqttClient.publish(topic, payload, retain, 0);
+  bool ok = mqttClient.publish(topic, payload, retain, 0);
+  DBG("[MQTT] PUB %s => %s | %s\n", topic.c_str(), payload.c_str(), ok ? "OK" : "FAIL");
 }
 
 void pubOnline() { mqttPub(CHIP_ID, "online", true); }
@@ -664,6 +753,7 @@ void pubPower() {
 }
 
 void publishTelemetry() {
+  DBG("[MQTT] ===== TELEMETRY chip=%s =====\n", CHIP_ID);
   pubTemp();
   wsClient.loop();
   pubHumi();
@@ -687,6 +777,7 @@ void publishTelemetry() {
   pubStatus();
   wsClient.loop();
   pubPower();
+  DBG("[MQTT] ===== TELEMETRY xong heap=%u =====\n", ESP.getFreeHeap());
 }
 
 HcMode parseHcMode(const String& s) {
@@ -815,24 +906,16 @@ function conn() {
   if (!s) { alert('Nhap ten WiFi!'); return; }
   const st = document.getElementById('st');
   st.style.display = 'block';
-  st.innerHTML = 'Dang ket noi...';
-  st.style.background = '#334155';
-  fetch('/connect', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'ssid=' + encodeURIComponent(s) + '&pass=' + encodeURIComponent(p)
-  }).then(r => r.json()).then(d => {
-    if (d.ok) {
-      st.style.background = '#22c55e';
-      st.innerHTML = 'Thanh cong! Dang restart...';
-    } else {
-      st.style.background = '#ef4444';
-      st.innerHTML = 'Loi: ' + (d.message || 'That bai');
-    }
-  }).catch(e => {
-    st.style.background = '#ef4444';
-    st.innerHTML = 'Loi mang!';
-  });
+  st.style.background = '#22c55e';
+  st.innerHTML = 'Dang gui... may se restart va ket noi WiFi.';
+  // Form POST (khong dung fetch) — captive portal on dinh hon, luon thay trang ket qua
+  const f = document.createElement('form');
+  f.method = 'POST';
+  f.action = '/connect';
+  const a = document.createElement('input'); a.name = 'ssid'; a.value = s; f.appendChild(a);
+  const b = document.createElement('input'); b.name = 'pass'; b.value = p; f.appendChild(b);
+  document.body.appendChild(f);
+  f.submit();
 }
 </script></body></html>
 )rawhtml";
@@ -844,56 +927,97 @@ void handleNotFound() {
 void handleRoot() { webServer.send_P(200, "text/html", PORTAL_HTML); }
 
 void handleScan() {
-  int n = WiFi.scanNetworks(false, false);
-  if (n < 0) { webServer.send(200, "application/json", "[]"); return; }
+  WiFi.mode(WIFI_AP_STA);
+  delay(30);
+  int n = WiFi.scanNetworks(false, false, false, 120);
   String json = "[";
-  for (int i = 0; i < n; i++) {
-    if (i) json += ",";
-    String ssid = WiFi.SSID(i);
-    ssid.replace("\\", "\\\\");
-    ssid.replace("\"", "\\\"");
-    json += "{\"ssid\":\"" + ssid + "\",\"rssi\":" + String(WiFi.RSSI(i)) + "}";
+  if (n > 0) {
+    for (int i = 0; i < n; i++) {
+      if (i) json += ",";
+      String ssid = WiFi.SSID(i);
+      ssid.replace("\\", "\\\\");
+      ssid.replace("\"", "\\\"");
+      json += "{\"ssid\":\"" + ssid + "\",\"rssi\":" + String(WiFi.RSSI(i)) + "}";
+    }
+    WiFi.scanDelete();
   }
   json += "]";
-  WiFi.scanDelete();
+  // Giữ AP; tắt STA scan
+  WiFi.mode(WIFI_AP);
   webServer.send(200, "application/json", json);
 }
 
 void handleConnect() {
   String ssid = webServer.arg("ssid");
   String pass = webServer.arg("pass");
-  if (ssid.length() > 0) {
-    WiFi.begin(ssid.c_str(), pass.c_str());
-    for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) delay(500);
-    if (WiFi.status() == WL_CONNECTED) {
-      addOrUpdateWifi(ssid, pass);
-      webServer.send(200, "application/json", "{\"ok\":true}");
-      delay(1000);
-      ESP.restart();
-    } else {
-      WiFi.disconnect();
-      webServer.send(200, "application/json", "{\"ok\":false,\"message\":\"Sai mat khau hoac WiFi yeu.\"}");
-    }
-  } else {
-    webServer.send(200, "application/json", "{\"ok\":false,\"message\":\"Chua nhap ten WiFi!\"}");
+  if (ssid.length() == 0) {
+    webServer.send(200, "text/html",
+                   "<html><body style='background:#0a1a12;color:#fff;padding:24px;font-family:sans-serif'>"
+                   "<h2>Loi</h2><p>Chua nhap ten WiFi.</p>"
+                   "<a style='color:#4ade80' href='/'>Quay lai</a></body></html>");
+    return;
   }
+  if (ssid.length() > 32) {
+    webServer.send(200, "text/html",
+                   "<html><body style='background:#0a1a12;color:#fff;padding:24px;font-family:sans-serif'>"
+                   "<h2>Loi</h2><p>Ten WiFi qua dai.</p>"
+                   "<a style='color:#4ade80' href='/'>Quay lai</a></body></html>");
+    return;
+  }
+
+  // Lưu → hiện trang thành công (điện thoại còn trên AP) → restart → STA thuần
+  addOrUpdateWifi(ssid, pass);
+  Serial.printf("[PORTAL] Da luu '%s' (pass len=%u) — trang OK roi restart\n",
+                ssid.c_str(), (unsigned)pass.length());
+
+  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
+                "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                "<title>Da luu</title></head>"
+                "<body style='background:#0a1a12;color:#e2e8f0;font-family:sans-serif;padding:28px;text-align:center'>"
+                "<h2 style='color:#4ade80'>Da luu WiFi!</h2>"
+                "<p>May dang <b>restart</b> de ket noi <b>";
+  html += ssid;
+  html += "</b>.</p>"
+          "<p style='color:#94b8a6'>Doi 15–20 giay. Mat WiFi ThuyCanh la binh thuong.</p>"
+          "<p>Neu that bai: noi lai <b>ThuyCanh</b>, kiem tra mat khau (dung 2.4GHz).</p>"
+          "</body></html>";
+
+  webServer.send(200, "text/html", html);
+  webServer.client().flush();
+  delay(2000);  // đủ thời gian điện thoại tải xong trang
+  ESP.restart();
 }
 
 void startPortal() {
   portalActive = true;
+  pendingStaConnect = false;
   setRelay(PIN_PUMP, false);
   setRelay(PIN_LIGHT, false);
-  Serial.println("\nKhoi tao AP Portal...");
-  WiFi.mode(WIFI_AP_STA);
+  Serial.println("\n[PORTAL] Khoi tao AP nhanh...");
+
+  WiFi.persistent(false);
+  WiFi.disconnect(true);
+  delay(50);
+  WiFi.mode(WIFI_OFF);
+  delay(80);
+  WiFi.mode(WIFI_AP);
+  delay(50);
   WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-  WiFi.softAP(AP_SSID, AP_PASSWORD);
+  // AP mở (không mật khẩu) — điện thoại vào nhanh hơn
+  bool apOk = WiFi.softAP(AP_SSID, nullptr, 1, 0, 4);
+  Serial.printf("[PORTAL] softAP=%s  SSID=%s  IP=%s\n",
+                apOk ? "OK" : "FAIL", AP_SSID, WiFi.softAPIP().toString().c_str());
+
+  dnsServer.stop();
   dnsServer.start(DNS_PORT, "*", apIP);
+  webServer.stop();
   webServer.on("/", HTTP_GET, handleRoot);
   webServer.on("/scan", HTTP_GET, handleScan);
   webServer.on("/connect", HTTP_POST, handleConnect);
   webServer.onNotFound(handleNotFound);
   webServer.begin();
-  Serial.println("Portal OK — ket noi WiFi: ThuyCanh → http://192.168.4.1");
+
+  Serial.println("[PORTAL] Vao WiFi 'ThuyCanh' → http://192.168.4.1");
   statusMsg = "Cau hinh mang";
 }
 
@@ -936,18 +1060,44 @@ void clearDoubleResetFlag() {
 // ─────────────────────────────────────────────────────────────
 //  SETUP / LOOP
 // ─────────────────────────────────────────────────────────────
+void debugPrintPinMap() {
+  Serial.println("---------- PIN MAP (DEBUG) ----------");
+  Serial.printf("  DHT22      GPIO %d\n", PIN_DHT);
+  Serial.printf("  LDR        GPIO %d\n", PIN_LDR);
+  Serial.printf("  pH         GPIO %d\n", PIN_PH);
+  Serial.printf("  TDS        GPIO %d (ENABLE=%d)\n", PIN_TDS, (int)ENABLE_TDS);
+  Serial.printf("  HC-SR04    TRIG %d  ECHO %d\n", PIN_TRIG, PIN_ECHO);
+  Serial.printf("  TFT SPI    SCL=%d SDA/MOSI=%d RES=%d DC=%d CS=GND BLK=3.3V\n",
+                TFT_SCLK, TFT_MOSI, TFT_RST, TFT_DC);
+  Serial.printf("  Relay CH1  BOM  GPIO %d\n", PIN_PUMP);
+  Serial.printf("  Relay CH2  DEN  GPIO %d\n", PIN_LIGHT);
+  Serial.printf("  CHIP_ID    %s\n", CHIP_ID);
+  Serial.printf("  MQTT       %s:%d%s\n", MQTT_HOST, MQTT_PORT, MQTT_PATH);
+  Serial.printf("  Water      FULL<=%.0fcm  EMPTY>=%.0fcm\n", DIST_FULL_CM, DIST_EMPTY_CM);
+  Serial.printf("  Light AUTO ON<%d%% OFF>%d%%\n", LIGHT_ON_BELOW_PCT, LIGHT_OFF_ABOVE_PCT);
+  Serial.printf("  DEBUG_SERIAL=%d\n", DEBUG_SERIAL);
+  Serial.println("-------------------------------------");
+}
+
 void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
   Serial.begin(115200);
   delay(300);
-  Serial.println("\n=== THUY CANH ESP32 + MQTT (chip 790) ===");
-  Serial.printf("Free heap: %u bytes (Kalman1D ~9B)\n", ESP.getFreeHeap());
+  Serial.println();
+  Serial.println("========================================");
+  Serial.println("  THUY CANH IoT STEM — ESP32 DEBUG");
+  Serial.printf("  CHIP_ID = %s  (app chi nhan chip nay)\n", CHIP_ID);
+  Serial.println("  Serial Monitor: 115200 baud\n");
+  Serial.printf("Free heap: %u bytes\n", ESP.getFreeHeap());
+  Serial.printf("Reset reason: %d\n", (int)esp_reset_reason());
+  debugPrintPinMap();
 
   pinMode(PIN_BOOT_BTN, INPUT_PULLUP);
   pinMode(PIN_TRIG, OUTPUT);
   pinMode(PIN_ECHO, INPUT);
   pinMode(PIN_PUMP, OUTPUT);
   pinMode(PIN_LIGHT, OUTPUT);
+  DBG_LN("[SETUP] Relay OFF luc khoi dong");
   setRelay(PIN_PUMP, false);
   setRelay(PIN_LIGHT, false);
 
@@ -955,61 +1105,84 @@ void setup() {
   analogSetAttenuation(ADC_11db);
 
   dht.begin();
+  DBG_LN("[SETUP] DHT22 begin");
 
-  Wire.begin(21, 22);
-  oledOK = oled.begin(SSD1306_SWITCHCAPVCC, 0x3C);
-  if (oledOK) {
-    oled.clearDisplay();
-    oled.setTextSize(1);
-    oled.setTextColor(SSD1306_WHITE);
-    oled.setCursor(0, 20);
-    oled.println("THUY CANH IoT");
-    oled.setCursor(0, 36);
-    oled.println("Dang khoi dong...");
-    oled.display();
-  } else {
-    Serial.println("Khong tim thay OLED");
-  }
+  // ----- TFT ST7735 SPI 80x160 -----
+  // CS -> GND, BLK -> 3.3V (không dùng GPIO ESP32)
 
-  Serial.printf("[WSS] beginSSL %s:%d%s\n", MQTT_HOST, MQTT_PORT, MQTT_PATH);
-  wsClient.beginSSL(MQTT_HOST, MQTT_PORT, MQTT_PATH);
-  wsClient.setExtraHeaders("Sec-WebSocket-Protocol: mqtt");
-  wsClient.setReconnectInterval(5000);
-  wsClient.onEvent([](WStype_t type, uint8_t* payload, size_t length) {
-    (void)length;
-    switch (type) {
-      case WStype_DISCONNECTED:
-        wssReady = false;
-        mqttLoggedOk = false;
-        Serial.println("[WSS] DISCONNECTED");
-        break;
-      case WStype_CONNECTED:
-        wssReady = true;
-        Serial.printf("[WSS] CONNECTED → %s\n", payload ? (const char*)payload : MQTT_HOST);
-        lastMqttRetry = 0;
-        break;
-      case WStype_ERROR:
-        wssReady = false;
-        Serial.println("[WSS] ERROR");
-        break;
-      default:
-        break;
-    }
-  });
+  Serial.println("[TFT] Init ST7735 80x160 SPI ...");
+  Serial.println("  GND->GND VCC->3.3V SCL->22 SDA->21 RES->17 DC->18 CS->GND BLK->3.3V");
 
-  mqttClient.begin(wsClient);
-  mqttClient.setTimeout(8000);
+#if TFT_INIT_MODE == 1
+  tft.initR(INITR_MINI160x80_PLUGIN);
+  Serial.println("[TFT] initR MINI160x80_PLUGIN");
+#elif TFT_INIT_MODE == 2
+  tft.initR(INITR_BLACKTAB);
+  Serial.println("[TFT] initR BLACKTAB");
+#else
+  tft.initR(INITR_MINI160x80);
+  Serial.println("[TFT] initR MINI160x80");
+#endif
 
+  tft.setRotation(1);  // ngang 160x80
+#if TFT_INVERT
+  tft.invertDisplay(true);
+#endif
+  tft.fillScreen(ST77XX_BLACK);  // chỉ xóa 1 lần lúc khởi động
+  tftOK = true;
+  Serial.println("[TFT] OK — chi hien cam bien, khong fillScreen moi lan ve");
+  lastTft = 0;
+
+  // WiFi / Portal TRƯỚC WSS — AP lên nhanh, không chờ SSL
   loadWifiList();
+  DBG("[SETUP] WiFi da luu: %d mang\n", wifiCount);
   checkDoubleReset();
 
-  if (isDoubleReset) {
+  if (isDoubleReset || wifiCount <= 0) {
+    DBG_LN("[SETUP] Mo Portal ngay (chua co WiFi / double-reset)");
     startPortal();
-  } else if (!(wifiCount > 0 && connectBestWifi())) {
+  } else if (!connectBestWifi()) {
+    DBG_LN("[SETUP] STA fail -> Portal");
     startPortal();
+  } else {
+    DBG("[SETUP] WiFi OK IP=%s RSSI=%d\n",
+        WiFi.localIP().toString().c_str(), WiFi.RSSI());
   }
 
-  statusMsg = "San sang";
+  // MQTT WSS chỉ khi đã có WiFi (không chạy trong portal)
+  if (!portalActive) {
+    Serial.printf("[WSS] beginSSL %s:%d%s\n", MQTT_HOST, MQTT_PORT, MQTT_PATH);
+    wsClient.beginSSL(MQTT_HOST, MQTT_PORT, MQTT_PATH);
+    wsClient.setExtraHeaders("Sec-WebSocket-Protocol: mqtt");
+    wsClient.setReconnectInterval(5000);
+    wsClient.onEvent([](WStype_t type, uint8_t* payload, size_t length) {
+      (void)length;
+      switch (type) {
+        case WStype_DISCONNECTED:
+          wssReady = false;
+          mqttLoggedOk = false;
+          Serial.println("[WSS] DISCONNECTED");
+          break;
+        case WStype_CONNECTED:
+          wssReady = true;
+          Serial.printf("[WSS] CONNECTED → %s\n", payload ? (const char*)payload : MQTT_HOST);
+          lastMqttRetry = 0;
+          break;
+        case WStype_ERROR:
+          wssReady = false;
+          Serial.println("[WSS] ERROR");
+          break;
+        default:
+          break;
+      }
+    });
+    mqttClient.begin(wsClient);
+    mqttClient.setTimeout(8000);
+  }
+
+  statusMsg = portalActive ? "Cau hinh mang" : "San sang";
+  Serial.println("[SETUP] Xong — mo Serial theo doi [PORTAL]/[SENSOR]/[MQTT]");
+  Serial.println("========================================\n");
 }
 
 void loop() {
@@ -1038,7 +1211,8 @@ void loop() {
         wifiRetries = 0;
       } else {
         wifiRetries++;
-        if (wifiRetries >= 3) {
+        // Sai mật khẩu / mất WiFi → về portal sớm hơn (không chờ 3x10s)
+        if (wifiRetries >= 2) {
           startPortal();
           wifiRetries = 0;
         }
@@ -1068,16 +1242,33 @@ void loop() {
 
   if (now - lastHeartbeat >= HEARTBEAT_MS) {
     lastHeartbeat = now;
+    DBG_LN("[MQTT] heartbeat online");
     pubOnline();
   }
 
   if (now - lastTelemetry >= TELEMETRY_MS) {
     lastTelemetry = now;
     publishTelemetry();
-    Serial.printf("T %.1f H %.0f pH %.2f Dist %.1fcm W %.0f%% alert=%d L %d | Bom %s Den %s | %s | MQTT=%d\n",
-                  hcTemp, hcHum, hcPh, hcDistCm, hcWaterPct, (int)waterAlert, hcLightPct,
-                  pumpOn ? "ON" : "OFF", lightOn ? "ON" : "OFF", statusMsg,
-                  mqttClient.isConnected());
+    const char* al = (waterAlert == WA_FULL) ? "FULL" :
+                     (waterAlert == WA_LOW)  ? "LOW"  : "OK";
+    Serial.println("---------- SNAPSHOT ----------");
+    Serial.printf("  chip=%s  wifi=%s  rssi=%d  mqtt=%d  ws=%d  heap=%u\n",
+                  CHIP_ID,
+                  WiFi.status() == WL_CONNECTED ? "OK" : "FAIL",
+                  WiFi.RSSI(),
+                  mqttClient.isConnected(),
+                  wsClient.isConnected(),
+                  ESP.getFreeHeap());
+    Serial.printf("  T=%.1fC  H=%.0f%%  pH=%.2f  TDS=%.0f  Light=%d%%\n",
+                  hcTemp, hcHum, hcPh, hcTds, hcLightPct);
+    Serial.printf("  Dist=%.1fcm  Water=%.0f%%  alert=%s\n",
+                  hcDistCm, hcWaterPct, al);
+    Serial.printf("  Bom=%s (mode=%d)  Den=%s (mode=%d)  Sys=%s\n",
+                  pumpOn ? "ON" : "OFF", (int)pumpMode,
+                  lightOn ? "ON" : "OFF", (int)lightMode,
+                  systemEnabled ? "ON" : "OFF");
+    Serial.printf("  status=\"%s\"\n", statusMsg);
+    Serial.println("------------------------------");
   }
 
   delay(50);

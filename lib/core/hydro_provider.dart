@@ -124,6 +124,11 @@ class HydroProvider extends ChangeNotifier {
         ? 'Đang chờ máy ${AppConfig.chipId} phản hồi...'
         : 'Đã sẵn sàng';
     notifyListeners();
+
+    // App chỉ theo dõi — bơm/đèn luôn AUTO theo cảm biến (không ép tay)
+    if (chipBound && ok) {
+      ensureSensorAutoControl();
+    }
   }
 
   Future<bool> connectWithChip(String rawChipId) async {
@@ -203,8 +208,10 @@ class HydroProvider extends ChangeNotifier {
     if (_is(topic, AppConfig.topicOnline)) {
       online = value.toString().toLowerCase() == 'online';
       if (online) {
+        final wasVerified = chipVerified;
         _markChipVerified();
         status = hasTelemetry ? 'OK' : 'Máy ${AppConfig.chipId} đã sẵn sàng';
+        if (!wasVerified) ensureSensorAutoControl();
       } else {
         online = false;
         status = 'Máy ${AppConfig.chipId} tạm offline — chờ kết nối lại';
@@ -305,42 +312,14 @@ class HydroProvider extends ChangeNotifier {
 
   bool _is(String topic, String expected) => topic == expected;
 
-  void togglePower() {
-    if (!_mqtt.isConnected) {
-      status = 'Chưa kết nối — hãy thử lại';
-      notifyListeners();
-      return;
+  /// Ép firmware về AUTO: bơm theo mực nước, đèn theo LDR.
+  void ensureSensorAutoControl() {
+    if (!_mqtt.isConnected) return;
+    if (!powerOn) {
+      powerOn = true;
+      _mqtt.setPower(true);
     }
-    final next = !powerOn;
-    powerOn = next;
-    status = next ? 'Bat tu App' : 'Tat tu App';
-    notifyListeners();
-    _mqtt.setPower(next);
-  }
-
-  void togglePump() {
-    if (!_mqtt.isConnected) return;
-    final next = !pumpOn;
-    pumpOn = next;
-    notifyListeners();
-    _mqtt.setPump(next ? 'ON' : 'OFF');
-  }
-
-  void toggleLamp() {
-    if (!_mqtt.isConnected) return;
-    final next = !lampOn;
-    lampOn = next;
-    notifyListeners();
-    _mqtt.setLamp(next ? 'ON' : 'OFF');
-  }
-
-  void setPumpAuto() {
-    if (!_mqtt.isConnected) return;
     _mqtt.setPump('AUTO');
-  }
-
-  void setLampAuto() {
-    if (!_mqtt.isConnected) return;
     _mqtt.setLamp('AUTO');
   }
 

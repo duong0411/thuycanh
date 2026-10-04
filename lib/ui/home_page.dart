@@ -165,7 +165,7 @@ class HomePage extends StatelessWidget {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'Các chỉ số từ ESP32 cập nhật qua MQTT',
+                              'Số liệu realtime từ máy thủy canh',
                               style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 13),
                             ),
                           ],
@@ -229,8 +229,7 @@ class HomePage extends StatelessWidget {
                       ),
                     ),
 
-                    // ── Điều khiển (tương tác → dùng tile) ──
-                    // Cards allowed for switches
+                    // ── Bơm & đèn: chỉ theo cảm biến (không điều khiển tay) ──
                     SliverToBoxAdapter(
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(24, 32, 24, 36),
@@ -238,48 +237,39 @@ class HomePage extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Điều khiển',
+                              'Bơm & đèn tự động',
                               style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 20),
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'Giữ lâu Bơm hoặc Đèn để về chế độ AUTO',
+                              'Máy tự chỉnh theo cảm biến — app chỉ hiển thị trạng thái.',
                               style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 13),
                             ),
                             const SizedBox(height: 14),
-                            _ControlTile(
-                              title: 'Hệ thống',
-                              subtitle: h.powerOn ? 'Đang vận hành' : 'Đã tạm dừng',
-                              value: h.powerOn,
-                              color: HydroTheme.leaf,
-                              icon: Icons.power_settings_new_rounded,
-                              onChanged: (_) => h.togglePower(),
-                            ),
-                            const SizedBox(height: 10),
-                            _ControlTile(
+                            _SensorActuatorCard(
                               title: 'Bơm tuần hoàn',
-                              subtitle: h.isWaterLow
-                                  ? 'Bảo vệ khô — hãy đổ nước ngoài'
-                                  : h.pumpOn
-                                      ? 'Đang chạy theo mực nước'
-                                      : 'Đang nghỉ',
-                              value: h.pumpOn,
+                              active: h.pumpOn,
                               color: HydroTheme.water,
                               icon: Icons.waves_rounded,
-                              onChanged: (_) => h.togglePump(),
-                              onLongPress: h.setPumpAuto,
+                              rule: 'Tự chỉnh theo mực nước',
+                              detail: h.isWaterLow
+                                  ? 'Nước thấp — bơm tắt, hãy đổ nước từ ngoài'
+                                  : h.isWaterFull
+                                      ? 'Nước đầy — bơm đang tuần hoàn'
+                                      : h.pumpOn
+                                          ? 'Đang chạy theo mực nước'
+                                          : 'Đang nghỉ',
                             ),
                             const SizedBox(height: 10),
-                            _ControlTile(
+                            _SensorActuatorCard(
                               title: 'Đèn trồng',
-                              subtitle: h.lampOn
-                                  ? 'Đang sáng (AUTO theo LDR khi không ép tay)'
-                                  : 'Đang tắt — chờ trời tối',
-                              value: h.lampOn,
+                              active: h.lampOn,
                               color: HydroTheme.sun,
                               icon: Icons.lightbulb_outline_rounded,
-                              onChanged: (_) => h.toggleLamp(),
-                              onLongPress: h.setLampAuto,
+                              rule: 'Tự chỉnh theo ánh sáng môi trường',
+                              detail: h.lampOn
+                                  ? 'Trời tối — đèn đang bật'
+                                  : 'Đủ sáng — đèn đang tắt',
                             ),
                             const SizedBox(height: 20),
                             _FooterStatus(h: h, live: live),
@@ -637,83 +627,91 @@ class _MetricCell extends StatelessWidget {
   }
 }
 
-class _ControlTile extends StatelessWidget {
-  const _ControlTile({
+class _SensorActuatorCard extends StatelessWidget {
+  const _SensorActuatorCard({
     required this.title,
-    required this.subtitle,
-    required this.value,
+    required this.active,
     required this.color,
     required this.icon,
-    required this.onChanged,
-    this.onLongPress,
+    required this.rule,
+    required this.detail,
   });
 
   final String title;
-  final String subtitle;
-  final bool value;
+  final bool active;
   final Color color;
   final IconData icon;
-  final ValueChanged<bool> onChanged;
-  final VoidCallback? onLongPress;
+  final String rule;
+  final String detail;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(20),
-        onLongPress: onLongPress,
-        child: Ink(
-          padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            gradient: LinearGradient(
-              colors: [
-                color.withValues(alpha: value ? 0.16 : 0.05),
-                Colors.white.withValues(alpha: 0.03),
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        color: HydroTheme.panel.withValues(alpha: 0.6),
+        border: Border.all(
+          color: active ? color.withValues(alpha: 0.4) : Colors.white.withValues(alpha: 0.06),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              color: color.withValues(alpha: active ? 0.2 : 0.08),
+            ),
+            child: Icon(icon, color: color, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 16),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  rule,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontSize: 12,
+                        color: HydroTheme.muted,
+                      ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  detail,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontSize: 13,
+                        color: HydroTheme.soft.withValues(alpha: 0.85),
+                      ),
+                ),
               ],
             ),
-            border: Border.all(
-              color: value ? color.withValues(alpha: 0.35) : Colors.white.withValues(alpha: 0.06),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(999),
+              color: (active ? color : HydroTheme.muted).withValues(alpha: 0.18),
+            ),
+            child: Text(
+              active ? 'ON' : 'OFF',
+              style: TextStyle(
+                color: active ? color : HydroTheme.muted,
+                fontWeight: FontWeight.w800,
+                fontSize: 12,
+              ),
             ),
           ),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(icon, color: color, size: 22),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 16),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-              Switch.adaptive(
-                value: value,
-                activeThumbColor: HydroTheme.deep,
-                activeTrackColor: color,
-                onChanged: onChanged,
-              ),
-            ],
-          ),
-        ),
+        ],
       ),
     );
   }
