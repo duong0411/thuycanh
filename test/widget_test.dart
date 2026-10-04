@@ -7,6 +7,7 @@ void main() {
     expect(AppConfig.distFullCm, 11);
     expect(AppConfig.distEmptyCm, 18);
     expect(AppConfig.subscribeTopics, contains(AppConfig.topicWaterAlert));
+    expect(AppConfig.topicOnline, 'tele/790/status');
     expect(AppConfig.deviceName.toLowerCase(), contains('thủy canh'));
   });
 }

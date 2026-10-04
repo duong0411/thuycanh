@@ -22,6 +22,10 @@ class HydroProvider extends ChangeNotifier {
   bool powerOn = true;
   DateTime? lastUpdate;
 
+  /// Đã nhận tín hiệu đúng chipId cấu hình (790) — bắt buộc trước khi vào hệ thống.
+  bool chipVerified = false;
+  String linkedChipId = '';
+
   double? temperature;
   double? humidity;
   double? ph;
@@ -41,6 +45,13 @@ class HydroProvider extends ChangeNotifier {
       ph != null ||
       waterPct != null ||
       distCm != null;
+
+  /// Chỉ vào Home khi MQTT OK + đúng chip 790 đang online / có tele.
+  bool get canEnterSystem =>
+      mqttConnected &&
+      chipVerified &&
+      linkedChipId == AppConfig.chipId &&
+      (online || hasTelemetry);
 
   bool get isWaterLow => waterAlert == WaterAlertLevel.low;
   bool get isWaterFull => waterAlert == WaterAlertLevel.full;
@@ -89,7 +100,13 @@ class HydroProvider extends ChangeNotifier {
 
   Future<void> start({bool force = false}) async {
     connecting = true;
-    status = 'Đang kết nối thủy canh...';
+    if (force) {
+      // Force reconnect: yêu cầu xác thực lại chip
+      chipVerified = false;
+      linkedChipId = '';
+      online = false;
+    }
+    status = 'Đang kết nối chip ${AppConfig.chipId}...';
     notifyListeners();
 
     _sub ??= _mqtt.messages.listen(_onMessage);
@@ -97,53 +114,86 @@ class HydroProvider extends ChangeNotifier {
     final ok = await _mqtt.connect(force: force);
     connecting = false;
     if (!ok) {
-      status = 'Chưa kết nối được — kéo xuống để thử lại';
+      status = 'Chưa kết nối MQTT — kéo xuống để thử lại';
       notifyListeners();
       return;
     }
 
-    status = 'Đã sẵn sàng — đang chờ dữ liệu cảm biến';
+    status = 'MQTT OK — chờ chip ${AppConfig.chipId} online...';
     notifyListeners();
+  }
+
+  /// Topic phải thuộc đúng chip cấu hình (790), chặn chip khác (vd 789).
+  bool _isOurChipTopic(String topic) {
+    final id = AppConfig.chipId;
+    return topic == 'tele/$id/status' ||
+        topic.startsWith('tele/${id}_') ||
+        topic.startsWith('cmnd/${id}_');
+  }
+
+  void _markChipVerified() {
+    chipVerified = true;
+    linkedChipId = AppConfig.chipId;
   }
 
   void _onMessage(Map<String, dynamic> data) {
     final topic = data['topic'] as String? ?? '';
     final value = data['value'];
 
-    // Chỉ map topic chip 790 — không đụng topic 789 (máy Ngưng Tụ)
+    // Chặn mọi topic không phải chip 790
+    if (!_isOurChipTopic(topic)) {
+      if (kDebugMode) print('Bỏ qua topic chip khác: $topic');
+      return;
+    }
+
     if (_is(topic, AppConfig.topicOnline)) {
       online = value.toString().toLowerCase() == 'online';
       if (online) {
-        status = hasTelemetry ? 'OK' : 'Đã sẵn sàng — chờ dữ liệu cảm biến';
+        _markChipVerified();
+        status = hasTelemetry ? 'OK' : 'Chip ${AppConfig.chipId} online';
       } else {
-        status = 'Đang chờ tín hiệu từ ESP32...';
+        // Offline: không cho vào hệ thống nữa cho đến khi online lại
+        online = false;
+        status = 'Chip ${AppConfig.chipId} offline — chờ kết nối lại';
       }
     } else if (_is(topic, AppConfig.topicTemp)) {
       temperature = _asDouble(value);
+      _markChipVerified();
     } else if (_is(topic, AppConfig.topicHumi)) {
       humidity = _asDouble(value);
+      _markChipVerified();
     } else if (_is(topic, AppConfig.topicPh)) {
       ph = _asDouble(value);
+      _markChipVerified();
     } else if (_is(topic, AppConfig.topicTds)) {
       tds = _asDouble(value);
+      _markChipVerified();
     } else if (_is(topic, AppConfig.topicWater)) {
       waterPct = _asDouble(value);
+      _markChipVerified();
     } else if (_is(topic, AppConfig.topicDist)) {
       distCm = _asDouble(value);
       _inferAlertFromDistance();
+      _markChipVerified();
     } else if (_is(topic, AppConfig.topicWaterAlert)) {
       waterAlert = _parseWaterAlert(value);
+      _markChipVerified();
     } else if (_is(topic, AppConfig.topicLight)) {
       lightPct = _asDouble(value);
+      _markChipVerified();
     } else if (_is(topic, AppConfig.topicPump)) {
       pumpOn = _asOn(value);
+      _markChipVerified();
     } else if (_is(topic, AppConfig.topicLamp)) {
       lampOn = _asOn(value);
+      _markChipVerified();
     } else if (_is(topic, AppConfig.topicPower)) {
       powerOn = _asOn(value);
+      _markChipVerified();
     } else if (_is(topic, AppConfig.topicStatus)) {
       status = value?.toString() ?? status;
       _inferAlertFromStatus(status);
+      _markChipVerified();
     } else {
       return;
     }

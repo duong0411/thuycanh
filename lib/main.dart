@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import 'core/auth_provider.dart';
 import 'core/hydro_provider.dart';
+import 'ui/device_gate_page.dart';
 import 'ui/home_page.dart';
 import 'ui/login_page.dart';
 import 'ui/theme.dart';
@@ -88,13 +89,19 @@ class _AuthGateState extends State<_AuthGate> {
       return const LoginPage();
     }
 
+    final hydro = context.watch<HydroProvider>();
     final uid = auth.user?.id;
     if (!_mqttStarted || _startedForUser != uid) {
       _mqttStarted = true;
       _startedForUser = uid;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        context.read<HydroProvider>().start();
+        context.read<HydroProvider>().start(force: true);
       });
+    }
+
+    // Bắt buộc kết nối đúng chipId (790) mới vào hệ thống giám sát
+    if (!hydro.canEnterSystem) {
+      return const DeviceGatePage();
     }
 
     return const HomePage();
