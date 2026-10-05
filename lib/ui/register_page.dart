@@ -72,13 +72,7 @@ class _RegisterPageState extends State<RegisterPage> {
 
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFF0C261A), HydroTheme.deep, Color(0xFF05140F)],
-          ),
-        ),
+        decoration: HydroTheme.screenGradient(),
         child: SafeArea(
           child: Column(
             children: [

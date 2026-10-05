@@ -29,10 +29,10 @@ class HydroProvider extends ChangeNotifier {
   double? temperature;
   double? humidity;
   double? ph;
-  double? tds;
   double? waterPct;
   double? distCm;
-  double? lightPct;
+  /// Cảm biến quang digital: 0 = Sáng, 1 = Tối (đèn AUTO bật khi = 1)
+  int? lightLevel;
   bool pumpOn = false;
   bool lampOn = false;
   WaterAlertLevel waterAlert = WaterAlertLevel.ok;
@@ -55,6 +55,14 @@ class HydroProvider extends ChangeNotifier {
 
   bool get isWaterLow => waterAlert == WaterAlertLevel.low;
   bool get isWaterFull => waterAlert == WaterAlertLevel.full;
+
+  /// 1 = tối, 0 = sáng (khớp firmware)
+  bool get isDark => lightLevel == 1;
+  bool get isBright => lightLevel == 0;
+  String get lightLabel {
+    if (lightLevel == null) return '--';
+    return isDark ? 'Tối' : 'Sáng';
+  }
 
   String get waterAlertTitle {
     switch (waterAlert) {
@@ -147,10 +155,9 @@ class HydroProvider extends ChangeNotifier {
     temperature = null;
     humidity = null;
     ph = null;
-    tds = null;
     waterPct = null;
     distCm = null;
-    lightPct = null;
+    lightLevel = null;
     pumpOn = false;
     lampOn = false;
     waterAlert = WaterAlertLevel.ok;
@@ -170,10 +177,9 @@ class HydroProvider extends ChangeNotifier {
     temperature = null;
     humidity = null;
     ph = null;
-    tds = null;
     waterPct = null;
     distCm = null;
-    lightPct = null;
+    lightLevel = null;
     pumpOn = false;
     lampOn = false;
     waterAlert = WaterAlertLevel.ok;
@@ -226,8 +232,8 @@ class HydroProvider extends ChangeNotifier {
       ph = _asDouble(value);
       _markChipVerified();
     } else if (_is(topic, AppConfig.topicTds)) {
-      tds = _asDouble(value);
-      _markChipVerified();
+      // TDS đã bỏ khỏi UI — bỏ qua payload
+      return;
     } else if (_is(topic, AppConfig.topicWater)) {
       waterPct = _asDouble(value);
       _markChipVerified();
@@ -239,7 +245,7 @@ class HydroProvider extends ChangeNotifier {
       waterAlert = _parseWaterAlert(value);
       _markChipVerified();
     } else if (_is(topic, AppConfig.topicLight)) {
-      lightPct = _asDouble(value);
+      lightLevel = _asLight01(value);
       _markChipVerified();
     } else if (_is(topic, AppConfig.topicPump)) {
       pumpOn = _asOn(value);
@@ -266,10 +272,9 @@ class HydroProvider extends ChangeNotifier {
         'temperature': temperature,
         'humidity': humidity,
         'ph': ph,
-        'tds': tds,
         'water': waterPct,
         'dist': distCm,
-        'light': lightPct,
+        'light': lightLevel,
         'pump': pumpOn,
         'lamp': lampOn,
         'power': powerOn,
@@ -329,6 +334,18 @@ class HydroProvider extends ChangeNotifier {
     if (v == null) return null;
     if (v is num) return v.toDouble();
     return double.tryParse(v.toString().replaceAll(',', '.'));
+  }
+
+  /// Chỉ nhận 0 hoặc 1 từ cảm biến quang digital.
+  int? _asLight01(dynamic v) {
+    if (v == null) return null;
+    if (v is num) return v.toInt().clamp(0, 1);
+    final s = v.toString().trim();
+    if (s == '0' || s.toUpperCase() == 'OFF' || s.toUpperCase() == 'SANG') return 0;
+    if (s == '1' || s.toUpperCase() == 'ON' || s.toUpperCase() == 'TOI') return 1;
+    final d = double.tryParse(s.replaceAll(',', '.'));
+    if (d == null) return null;
+    return d >= 0.5 ? 1 : 0;
   }
 
   bool _asOn(dynamic v) {

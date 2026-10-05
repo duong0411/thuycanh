@@ -26,43 +26,26 @@ class HomePage extends StatelessWidget {
       body: Container(
         width: double.infinity,
         height: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF0C261A),
-              HydroTheme.deep,
-              Color(0xFF05140F),
-              Color(0xFF0A1F28),
-            ],
-            stops: [0, 0.35, 0.75, 1],
-          ),
-        ),
+        decoration: HydroTheme.screenGradient(),
         child: Stack(
           children: [
             Positioned(
-              top: -size.width * 0.35,
-              right: -size.width * 0.25,
-              child: _orb(size.width * 0.9, HydroTheme.leaf.withValues(alpha: 0.14))
+              top: -size.width * 0.3,
+              right: -size.width * 0.2,
+              child: _orb(size.width * 0.85, HydroTheme.leaf.withValues(alpha: 0.12))
                   .animate(onPlay: (a) => a.repeat(reverse: true))
                   .scale(
-                    begin: const Offset(0.92, 0.92),
-                    end: const Offset(1.08, 1.08),
-                    duration: 8.seconds,
+                    begin: const Offset(0.94, 0.94),
+                    end: const Offset(1.06, 1.06),
+                    duration: 9.seconds,
                   ),
             ),
             Positioned(
-              bottom: size.height * 0.12,
-              left: -80,
-              child: _orb(240, HydroTheme.water.withValues(alpha: 0.1))
+              bottom: size.height * 0.08,
+              left: -70,
+              child: _orb(220, HydroTheme.water.withValues(alpha: 0.1))
                   .animate(onPlay: (a) => a.repeat(reverse: true))
-                  .fade(begin: 0.35, end: 0.9, duration: 6.seconds),
-            ),
-            Positioned(
-              top: size.height * 0.42,
-              right: -40,
-              child: _orb(140, HydroTheme.sun.withValues(alpha: 0.06)),
+                  .fade(begin: 0.4, end: 0.85, duration: 7.seconds),
             ),
             SafeArea(
               child: RefreshIndicator(
@@ -74,17 +57,15 @@ class HomePage extends StatelessWidget {
                     parent: BouncingScrollPhysics(),
                   ),
                   slivers: [
-                    // ── Hero: brand + một câu + trạng thái ──
                     SliverToBoxAdapter(
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 10, 24, 0),
+                        padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             _TopBar(
                               live: live,
                               chipId: AppConfig.chipId,
-                              greetName: greet,
                               onChangeDevice: () async {
                                 context.read<HydroProvider>().disconnectChip();
                                 await context.read<AuthProvider>().clearBoundChip();
@@ -94,166 +75,155 @@ class HomePage extends StatelessWidget {
                               },
                               onLogout: () async {
                                 final hydro = context.read<HydroProvider>();
-                                final auth = context.read<AuthProvider>();
+                                final a = context.read<AuthProvider>();
                                 hydro.disconnectChip();
-                                await auth.clearBoundChip();
-                                await auth.logout();
+                                await a.clearBoundChip();
+                                await a.logout();
                               },
                             ),
-                            SizedBox(height: size.height * 0.04),
+                            SizedBox(height: size.height * 0.028),
                             Text(
                               'THỦY CANH',
                               style: Theme.of(context).textTheme.displayMedium?.copyWith(
-                                    fontSize: size.width > 390 ? 52 : 44,
+                                    fontSize: size.width > 390 ? 50 : 42,
                                   ),
                             )
                                 .animate()
-                                .fadeIn(duration: 500.ms)
-                                .slideY(begin: 0.1, curve: Curves.easeOutCubic),
-                            const SizedBox(height: 10),
+                                .fadeIn(duration: 480.ms)
+                                .slideY(begin: 0.08, curve: Curves.easeOutCubic),
+                            const SizedBox(height: 8),
                             Text(
                               greet != null
-                                  ? 'Xin chào $greet — theo dõi dinh dưỡng realtime'
-                                  : 'Nuôi cây sạch — theo dõi dinh dưỡng realtime',
+                                  ? 'Xin chào $greet — IoT STEM realtime'
+                                  : 'Giám sát cây trồng IoT STEM realtime',
                               style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                    color: HydroTheme.water.withValues(alpha: 0.92),
-                                    fontSize: 16,
+                                    color: HydroTheme.water.withValues(alpha: 0.95),
+                                    fontSize: 15.5,
                                     fontWeight: FontWeight.w500,
                                   ),
-                            ).animate().fadeIn(delay: 80.ms, duration: 400.ms),
-                            const SizedBox(height: 18),
-                            _HeroStatus(h: h, live: live),
+                            ).animate().fadeIn(delay: 70.ms, duration: 400.ms),
+                            const SizedBox(height: 14),
+                            Text(
+                              h.friendlyStatus,
+                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    fontSize: 13.5,
+                                    color: HydroTheme.soft.withValues(alpha: 0.7),
+                                  ),
+                            ),
                           ],
                         ),
                       ),
                     ),
 
-                    // ── Visual mực nước (neo thị giác) ──
+                    // Neo thị giác: mực nước
                     SliverToBoxAdapter(
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 28, 24, 8),
-                        child: _WaterHero(
+                        padding: const EdgeInsets.fromLTRB(24, 26, 24, 8),
+                        child: _WaterStage(
                           fraction: waterFrac,
                           pctText: h.waterPct == null ? '--' : '${h.waterPct!.toStringAsFixed(0)}%',
                           distText: h.distCm == null
                               ? 'Chờ cảm biến siêu âm'
                               : 'Cách mặt nước ${h.distCm!.toStringAsFixed(1)} cm',
                           alert: h.waterAlert,
-                        ).animate().fadeIn(delay: 120.ms).slideY(begin: 0.06),
+                        ).animate().fadeIn(delay: 100.ms).slideY(begin: 0.05),
                       ),
                     ),
 
                     if (h.isWaterLow || h.isWaterFull)
                       SliverToBoxAdapter(
                         child: Padding(
-                          padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+                          padding: const EdgeInsets.fromLTRB(24, 10, 24, 0),
                           child: _AlertStrip(h: h),
                         ),
                       ),
 
-                    // ── Cảm biến môi trường ──
-                    // Cards chỉ dùng khi cần nhóm số liệu đọc nhanh — không ở hero
+                    // Môi trường — hàng số liệu sạch, không lưới card dày
                     SliverToBoxAdapter(
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 28, 24, 8),
+                        padding: const EdgeInsets.fromLTRB(24, 28, 24, 10),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
                               'Môi trường trồng',
-                              style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 20),
+                              style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 19),
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'Số liệu realtime từ máy thủy canh',
+                              'Nhiệt độ · Độ ẩm · pH · Ánh sáng',
                               style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 13),
+                            ),
+                            const SizedBox(height: 16),
+                            _MetricRow(
+                              items: [
+                                _Metric(
+                                  label: 'Nhiệt độ',
+                                  value: _n(h.temperature, 1),
+                                  unit: '°C',
+                                  icon: Icons.thermostat_rounded,
+                                  accent: HydroTheme.sun,
+                                ),
+                                _Metric(
+                                  label: 'Độ ẩm',
+                                  value: _n(h.humidity, 0),
+                                  unit: '%',
+                                  icon: Icons.water_drop_outlined,
+                                  accent: HydroTheme.water,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            _MetricRow(
+                              items: [
+                                _Metric(
+                                  label: 'pH',
+                                  value: _n(h.ph, 2),
+                                  unit: '',
+                                  icon: Icons.science_outlined,
+                                  accent: const Color(0xFF7DDEA8),
+                                ),
+                                _Metric(
+                                  label: 'Ánh sáng',
+                                  value: h.lightLabel,
+                                  unit: h.lightLevel == null ? '' : (h.isDark ? '· 1' : '· 0'),
+                                  icon: h.isDark
+                                      ? Icons.nightlight_round
+                                      : Icons.wb_sunny_rounded,
+                                  accent: h.isDark ? const Color(0xFFA5B4FC) : HydroTheme.sun,
+                                  emphasize: true,
+                                ),
+                              ],
                             ),
                           ],
                         ),
                       ),
                     ),
-                    SliverPadding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      sliver: SliverGrid(
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          mainAxisSpacing: 12,
-                          crossAxisSpacing: 12,
-                          childAspectRatio: 1.28,
-                        ),
-                        delegate: SliverChildListDelegate([
-                          _MetricCell(
-                            label: 'Nhiệt độ',
-                            value: _n(h.temperature, 1),
-                            unit: '°C',
-                            icon: Icons.thermostat_rounded,
-                            accent: HydroTheme.sun,
-                          ),
-                          _MetricCell(
-                            label: 'Độ ẩm',
-                            value: _n(h.humidity, 0),
-                            unit: '%',
-                            icon: Icons.water_drop_outlined,
-                            accent: HydroTheme.water,
-                          ),
-                          _MetricCell(
-                            label: 'pH dinh dưỡng',
-                            value: _n(h.ph, 2),
-                            unit: '',
-                            icon: Icons.science_outlined,
-                            accent: const Color(0xFF86EFAC),
-                          ),
-                          _MetricCell(
-                            label: 'TDS',
-                            value: _n(h.tds, 0),
-                            unit: 'ppm',
-                            icon: Icons.bubble_chart_outlined,
-                            accent: HydroTheme.leaf,
-                          ),
-                          _MetricCell(
-                            label: 'Ánh sáng',
-                            value: _n(h.lightPct, 0),
-                            unit: '%',
-                            icon: Icons.wb_sunny_outlined,
-                            accent: HydroTheme.sun,
-                          ),
-                          _MetricCell(
-                            label: 'Bơm / Đèn',
-                            value: '${h.pumpOn ? 'ON' : 'OFF'} · ${h.lampOn ? 'ON' : 'OFF'}',
-                            unit: '',
-                            icon: Icons.tune_rounded,
-                            accent: HydroTheme.water,
-                            compactValue: true,
-                          ),
-                        ]),
-                      ),
-                    ),
 
-                    // ── Bơm & đèn: chỉ theo cảm biến (không điều khiển tay) ──
+                    // Tự động
                     SliverToBoxAdapter(
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 32, 24, 36),
+                        padding: const EdgeInsets.fromLTRB(24, 22, 24, 36),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Bơm & đèn tự động',
-                              style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 20),
+                              'Tự động theo cảm biến',
+                              style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 19),
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'Máy tự chỉnh theo cảm biến — app chỉ hiển thị trạng thái.',
+                              'Máy tự chỉnh — app chỉ theo dõi trạng thái.',
                               style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 13),
                             ),
                             const SizedBox(height: 14),
-                            _SensorActuatorCard(
+                            _ActuatorTile(
                               title: 'Bơm tuần hoàn',
                               active: h.pumpOn,
                               color: HydroTheme.water,
                               icon: Icons.waves_rounded,
-                              rule: 'Tự chỉnh theo mực nước',
                               detail: h.isWaterLow
-                                  ? 'Nước thấp — bơm tắt, hãy đổ nước từ ngoài'
+                                  ? 'Nước thấp — bơm tắt, hãy đổ nước'
                                   : h.isWaterFull
                                       ? 'Nước đầy — bơm đang tuần hoàn'
                                       : h.pumpOn
@@ -261,17 +231,18 @@ class HomePage extends StatelessWidget {
                                           : 'Đang nghỉ',
                             ),
                             const SizedBox(height: 10),
-                            _SensorActuatorCard(
+                            _ActuatorTile(
                               title: 'Đèn trồng',
                               active: h.lampOn,
                               color: HydroTheme.sun,
                               icon: Icons.lightbulb_outline_rounded,
-                              rule: 'Tự chỉnh theo ánh sáng môi trường',
-                              detail: h.lampOn
-                                  ? 'Trời tối — đèn đang bật'
-                                  : 'Đủ sáng — đèn đang tắt',
+                              detail: h.lightLevel == null
+                                  ? (h.lampOn ? 'Đèn đang bật' : 'Đèn đang tắt')
+                                  : h.isDark
+                                      ? 'Trời tối (1) — đèn bật'
+                                      : 'Đủ sáng (0) — đèn tắt',
                             ),
-                            const SizedBox(height: 20),
+                            const SizedBox(height: 18),
                             _FooterStatus(h: h, live: live),
                           ],
                         ),
@@ -310,11 +281,9 @@ class _TopBar extends StatelessWidget {
     required this.chipId,
     required this.onChangeDevice,
     required this.onLogout,
-    this.greetName,
   });
   final bool live;
   final String chipId;
-  final String? greetName;
   final VoidCallback onChangeDevice;
   final VoidCallback onLogout;
 
@@ -322,21 +291,27 @@ class _TopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(
-          Icons.eco_rounded,
-          size: 18,
-          color: HydroTheme.leaf.withValues(alpha: 0.9),
-        ),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Text(
-            'Chip $chipId',
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  fontSize: 12,
-                  letterSpacing: 0.6,
-                  color: HydroTheme.muted,
-                ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            color: Colors.white.withValues(alpha: 0.05),
+            border: Border.all(color: HydroTheme.line),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.eco_rounded, size: 15, color: HydroTheme.leaf.withValues(alpha: 0.95)),
+              const SizedBox(width: 6),
+              Text(
+                'Chip $chipId',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      fontSize: 12,
+                      color: HydroTheme.muted,
+                      letterSpacing: 0.3,
+                    ),
+              ),
+            ],
           ),
         ),
         const Spacer(),
@@ -347,7 +322,7 @@ class _TopBar extends StatelessWidget {
             color: live ? HydroTheme.leaf : HydroTheme.sun,
             shape: BoxShape.circle,
             boxShadow: live
-                ? [BoxShadow(color: HydroTheme.leaf.withValues(alpha: 0.5), blurRadius: 8)]
+                ? [BoxShadow(color: HydroTheme.leaf.withValues(alpha: 0.55), blurRadius: 8)]
                 : null,
           ),
         )
@@ -359,7 +334,7 @@ class _TopBar extends StatelessWidget {
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
-                color: HydroTheme.soft.withValues(alpha: 0.75),
+                color: HydroTheme.soft.withValues(alpha: 0.78),
               ),
         ),
         IconButton(
@@ -379,25 +354,8 @@ class _TopBar extends StatelessWidget {
   }
 }
 
-class _HeroStatus extends StatelessWidget {
-  const _HeroStatus({required this.h, required this.live});
-  final HydroProvider h;
-  final bool live;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      h.friendlyStatus,
-      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            fontSize: 14,
-            color: HydroTheme.soft.withValues(alpha: 0.72),
-          ),
-    );
-  }
-}
-
-class _WaterHero extends StatelessWidget {
-  const _WaterHero({
+class _WaterStage extends StatelessWidget {
+  const _WaterStage({
     required this.fraction,
     required this.pctText,
     required this.distText,
@@ -429,19 +387,18 @@ class _WaterHero extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Text(
               'Mực nước',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 18),
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 17),
             ),
             const Spacer(),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
-                color: accent.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: accent.withValues(alpha: 0.35)),
+                color: accent.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: accent.withValues(alpha: 0.4)),
               ),
               child: Text(
                 tag,
@@ -449,61 +406,74 @@ class _WaterHero extends StatelessWidget {
                   color: accent,
                   fontSize: 11,
                   fontWeight: FontWeight.w800,
-                  letterSpacing: 0.8,
+                  letterSpacing: 0.9,
                 ),
               ),
             ),
           ],
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 16),
         Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Text(
               pctText,
               style: Theme.of(context).textTheme.displayMedium?.copyWith(
-                    fontSize: 48,
+                    fontSize: 52,
                     color: accent,
-                    height: 1,
+                    height: 0.95,
                   ),
             ),
             const SizedBox(width: 12),
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                distText,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 13),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  distText,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 13),
+                ),
               ),
             ),
           ],
         ),
-        const SizedBox(height: 16),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(999),
-          child: SizedBox(
-            height: 12,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                ColoredBox(color: Colors.white.withValues(alpha: 0.06)),
-                FractionallySizedBox(
-                  widthFactor: fraction <= 0 && pctText == '--' ? 0 : fraction.clamp(0.02, 1.0),
-                  alignment: Alignment.centerLeft,
+        const SizedBox(height: 18),
+        // Bể nước minh họa
+        SizedBox(
+          height: 88,
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+                    color: Colors.white.withValues(alpha: 0.03),
+                  ),
+                ),
+              ),
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: FractionallySizedBox(
+                  heightFactor: fraction <= 0 && pctText == '--' ? 0.08 : fraction.clamp(0.08, 1.0),
+                  widthFactor: 1,
                   child: DecoratedBox(
                     decoration: BoxDecoration(
+                      borderRadius: const BorderRadius.vertical(bottom: Radius.circular(22)),
                       gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
                         colors: [
-                          accent.withValues(alpha: 0.7),
-                          accent,
+                          accent.withValues(alpha: 0.35),
+                          accent.withValues(alpha: 0.85),
                         ],
                       ),
                     ),
-                  ),
-                )
-                    .animate(onPlay: (a) => a.repeat(reverse: true))
-                    .shimmer(duration: 2.8.seconds, color: Colors.white24),
-              ],
-            ),
+                  )
+                      .animate(onPlay: (a) => a.repeat(reverse: true))
+                      .shimmer(duration: 3.seconds, color: Colors.white24),
+                ),
+              ),
+            ],
           ),
         ),
         const SizedBox(height: 8),
@@ -547,50 +517,74 @@ class _AlertStrip extends StatelessWidget {
               h.waterAlertBody,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     fontSize: 13,
-                    color: HydroTheme.soft.withValues(alpha: 0.88),
-                    height: 1.35,
+                    color: HydroTheme.soft.withValues(alpha: 0.9),
                   ),
             ),
           ),
         ],
       ),
-    ).animate().fadeIn(duration: 300.ms);
+    ).animate().fadeIn(duration: 280.ms);
   }
 }
 
-class _MetricCell extends StatelessWidget {
-  const _MetricCell({
+class _Metric {
+  const _Metric({
     required this.label,
     required this.value,
     required this.unit,
     required this.icon,
     required this.accent,
-    this.compactValue = false,
+    this.emphasize = false,
   });
-
   final String label;
   final String value;
   final String unit;
   final IconData icon;
   final Color accent;
-  final bool compactValue;
+  final bool emphasize;
+}
+
+class _MetricRow extends StatelessWidget {
+  const _MetricRow({required this.items});
+  final List<_Metric> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        for (var i = 0; i < items.length; i++) ...[
+          if (i > 0) const SizedBox(width: 10),
+          Expanded(child: _MetricTile(m: items[i])),
+        ],
+      ],
+    );
+  }
+}
+
+class _MetricTile extends StatelessWidget {
+  const _MetricTile({required this.m});
+  final _Metric m;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(18),
         color: HydroTheme.panel.withValues(alpha: 0.55),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+        border: Border.all(
+          color: m.emphasize
+              ? m.accent.withValues(alpha: 0.35)
+              : Colors.white.withValues(alpha: 0.06),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: accent, size: 20),
-          const Spacer(),
+          Icon(m.icon, color: m.accent, size: 20),
+          const SizedBox(height: 14),
           Text(
-            label,
+            m.label,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   fontSize: 12,
                   color: HydroTheme.muted,
@@ -602,18 +596,18 @@ class _MetricCell extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             text: TextSpan(
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontSize: compactValue ? 15 : 24,
+                    fontSize: m.emphasize ? 22 : 22,
                     fontWeight: FontWeight.w800,
                     height: 1.1,
                     color: HydroTheme.soft,
                   ),
               children: [
-                TextSpan(text: value),
-                if (unit.isNotEmpty)
+                TextSpan(text: m.value),
+                if (m.unit.isNotEmpty)
                   TextSpan(
-                    text: ' $unit',
+                    text: ' ${m.unit}',
                     style: TextStyle(
-                      fontSize: compactValue ? 12 : 14,
+                      fontSize: 13,
                       fontWeight: FontWeight.w600,
                       color: HydroTheme.muted,
                     ),
@@ -627,13 +621,12 @@ class _MetricCell extends StatelessWidget {
   }
 }
 
-class _SensorActuatorCard extends StatelessWidget {
-  const _SensorActuatorCard({
+class _ActuatorTile extends StatelessWidget {
+  const _ActuatorTile({
     required this.title,
     required this.active,
     required this.color,
     required this.icon,
-    required this.rule,
     required this.detail,
   });
 
@@ -641,17 +634,16 @@ class _SensorActuatorCard extends StatelessWidget {
   final bool active;
   final Color color;
   final IconData icon;
-  final String rule;
   final String detail;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
-        color: HydroTheme.panel.withValues(alpha: 0.6),
+        color: HydroTheme.panel.withValues(alpha: 0.55),
         border: Border.all(
           color: active ? color.withValues(alpha: 0.4) : Colors.white.withValues(alpha: 0.06),
         ),
@@ -659,13 +651,13 @@ class _SensorActuatorCard extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 44,
-            height: 44,
+            width: 42,
+            height: 42,
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              color: color.withValues(alpha: active ? 0.2 : 0.08),
+              borderRadius: BorderRadius.circular(13),
+              color: color.withValues(alpha: active ? 0.22 : 0.08),
             ),
-            child: Icon(icon, color: color, size: 22),
+            child: Icon(icon, color: color, size: 21),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -674,22 +666,14 @@ class _SensorActuatorCard extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 16),
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 15.5),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  rule,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontSize: 12,
-                        color: HydroTheme.muted,
-                      ),
-                ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 3),
                 Text(
                   detail,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontSize: 13,
-                        color: HydroTheme.soft.withValues(alpha: 0.85),
+                        fontSize: 12.5,
+                        color: HydroTheme.soft.withValues(alpha: 0.82),
                       ),
                 ),
               ],

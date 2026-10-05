@@ -20,7 +20,7 @@
  *
  * Sơ đồ chân:
  *   DHT22     -> GPIO 4
- *   LDR       -> GPIO 34 (analog)
+ *   LDR (DO)  -> GPIO 34 (digital 0/1)  << dùng chân DO của module, không dùng AO
  *   pH        -> GPIO 35 (analog)
  *   TDS       -> GPIO 32 (analog, tùy chọn)
  *   HC-SR04   -> TRIG GPIO 12, ECHO GPIO 13
@@ -28,13 +28,12 @@
  * TFT IPS 0.96" 80x160 (SPI — chân ghi SCL/SDA nhưng là SPI, KHÔNG phải I2C):
  *   GND  -> GND
  *   VCC  -> 3.3V
- *   SCL  -> GPIO 22   (SPI SCK)  << giữ như đã hàn OLED cũ
- *   SDA  -> GPIO 21   (SPI MOSI) << giữ như đã hàn OLED cũ
+ *   SCL  -> GPIO 22   (D22 / SPI SCK)
+ *   SDA  -> GPIO 21   (D21 / SPI MOSI)
  *   RES  -> GPIO 17
- *   DC   -> GPIO 18   << BẮT BUỘC GPIO (không nối GND)
- *   CS   -> GND       << nối GND cứng (không dùng GPIO ESP32)
- *   BLK  -> 3.3V      << nối 3.3V cứng (đèn nền luôn sáng, không dùng GPIO)
- *   (Không dùng GPIO cho CS / BLK)
+ *   DC   -> GPIO 16   (D16)
+ *   CS   -> GPIO 5    (D5)
+ *   BLK  -> GPIO 15   (D15)  << đèn nền
  *
  * RELAY 2 KÊNH (điều khiển bơm + đèn):
  *   IN1 (kênh 1 - BƠM)  -> GPIO 26
@@ -42,7 +41,7 @@
  *   VCC module          -> 5V (hoặc 3.3V tùy module)
  *   GND                 -> GND chung ESP32
  *   COM/NO mỗi kênh cấp nguồn riêng cho bơm 5V / đèn trồng
- *   Đèn: chế độ AUTO theo LDR (tối -> bật, sáng -> tắt)
+ *   Đèn: chế độ AUTO theo LDR digital (0 -> tắt, 1 -> bật)
  *
  * LƯU Ý ĐIỆN ÁP:
  *   - ECHO HC-SR04 = 5V -> cầu phân áp (1k + 2k) trước GPIO 13
@@ -63,10 +62,16 @@
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 
-// Một số module IPS cần invert / init khác — thử lần lượt nếu màu/offset lệch
+// Nếu màn SÁNG nhưng KHÔNG hiện chữ: thử lần lượt các tổ hợp:
+//   TFT_INIT_MODE 0 / 1 / 2
+//   TFT_INVERT     0 / 1
+// Lưu ý: ESP32-WROVER dùng GPIO16/17 cho PSRAM → không đấu DC/RES vào 16/17!
 // 0 = INITR_MINI160x80  |  1 = INITR_MINI160x80_PLUGIN  |  2 = INITR_BLACKTAB
 #define TFT_INIT_MODE   0
-#define TFT_INVERT      1   // IPS hay bị âm màu → để 1; nếu màu đúng thì đổi 0
+#define TFT_INVERT      0
+#define TFT_BOOT_FLASH  1
+// 1 = software SPI (ổn định hơn với module 0.96"); 0 = HSPI phần cứng
+#define TFT_SOFT_SPI    1
 
 // ─────────────────────────────────────────────────────────────
 //  DEBUG Serial (115200) — đặt 0 để tắt log chi tiết
@@ -85,7 +90,7 @@
 //  CHÂN PHẦN CỨNG THỦY CANH
 // ─────────────────────────────────────────────────────────────
 #define PIN_DHT       4
-#define PIN_LDR       34
+#define PIN_LDR       34   // cảm biến quang DIGITAL (chân DO) → đọc 0/1
 #define PIN_PH        35
 #define PIN_TDS       32
 #define PIN_TRIG      12
@@ -96,16 +101,22 @@
 #define PIN_BOOT_BTN  0
 #define BOOT_HOLD_MS  3000
 
-// TFT ST7735 SPI 80x160 (xoay ngang → 160x80)
-// SCL/SDA giữ GPIO 22/21 như đã hàn trước (bit-bang SPI)
-#define TFT_SCLK      22   // SCL trên module
-#define TFT_MOSI      21   // SDA trên module (MOSI)
+// TFT ST7735 HSPI 80x160 (xoay ngang → 160x80)
+#define TFT_SCLK      22   // SCL -> D22
+#define TFT_MOSI      21   // SDA -> D21 (MOSI)
+#define TFT_MISO      -1   // không dùng
 #define TFT_RST       17   // RES
-#define TFT_DC        18   // bắt buộc GPIO
-#define TFT_CS        -1   // CS hàn sang GND — không chiếm GPIO
-// BLK: hàn sang 3.3V (luôn sáng) — không định nghĩa GPIO
+#define TFT_DC        16   // DC  -> D16
+#define TFT_CS         5   // CS  -> D5
+#define TFT_BLK       15   // BLK -> D15 (đèn nền)
+#define TFT_SPI_HZ    1000000UL  // HSPI 1MHz — giảm nhiễu
 #define TFT_W        160
 #define TFT_H         80
+// Màu bổ sung (Adafruit ST77XX không có sẵn)
+#define COL_DARKGREEN  0x0320
+#define COL_NAVY       0x000F
+#define COL_DARKGREY   0x7BEF
+#define COL_ORANGE     0xFC00
 
 // ─────────────────────────────────────────────────────────────
 //  WIFI PORTAL
@@ -166,9 +177,11 @@ const float KF_R = 1.0f;
 const float KF_OUTLIER_CM = 3.5f;
 const float KF_REJECT_CM  = 8.0f;
 
-// Đèn AUTO theo LDR (% ánh sáng). Tối hơn ngưỡng -> bật đèn trồng
-const int LIGHT_ON_BELOW_PCT  = 30;  // < 30%  -> bật đèn
-const int LIGHT_OFF_ABOVE_PCT = 40;  // > 40%  -> tắt đèn (hysteresis chống nhấp)
+// Đèn AUTO theo LDR digital (đã khớp module của bạn):
+//   hcLight == 0 → tắt đèn
+//   hcLight == 1 → bật đèn
+// Nếu sau này bị ngược lại, đặt LIGHT_INVERT_DO = 1
+#define LIGHT_INVERT_DO  0
 
 // Hiệu chuẩn pH
 const float PH_DIVIDER   = 1.0f;
@@ -186,8 +199,13 @@ int wifiCount = 0;
 // ─────────────────────────────────────────────────────────────
 //  ĐỐI TƯỢNG
 // ─────────────────────────────────────────────────────────────
-// CS = -1 khi chân CS module đã nối GND
+#if TFT_SOFT_SPI
+// Software SPI: truyền đủ CS/DC/MOSI/SCLK/RST — dễ lên hình hơn HSPI remap
 Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
+#else
+SPIClass spiTFT = SPIClass(HSPI);
+Adafruit_ST7735 tft = Adafruit_ST7735(&spiTFT, TFT_CS, TFT_DC, TFT_RST);
+#endif
 DHT dht(PIN_DHT, DHT22);
 WebServer webServer(80);
 DNSServer dnsServer;
@@ -200,7 +218,7 @@ MQTTPubSubClient mqttClient;
 float hcTemp = NAN, hcHum = NAN, hcPh = NAN, hcTds = 0;
 float hcWaterPct = 0;
 float hcDistCm = NAN;          // khoảng cách đã lọc (Kalman)
-int   hcLightPct = 0;
+int   hcLight = 0;   // quang digital: 0 = tat den, 1 = bat den
 
 // Kalman 1D — chỉ ~9 byte RAM tĩnh (không malloc, không buffer lớn)
 struct DistKalman1D {
@@ -235,12 +253,15 @@ unsigned long lastHeartbeat = 0;
 unsigned long lastReconnect = 0;
 unsigned long lastMqttRetry = 0;
 unsigned long lastTft = 0;
+unsigned long lastTftBlink = 0;
+bool tftBlinkOn = true;
 bool wssReady = false;
 bool mqttLoggedOk = false;
 int wifiRetries = 0;
 
 unsigned long bootPressStart = 0;
 bool bootWasPressed = false;
+bool bootHoldUiShown = false;
 
 #define DOUBLE_RESET_MAGIC 0x12345678
 RTC_DATA_ATTR uint32_t rtcMagic = 0;
@@ -404,11 +425,13 @@ float readPH() {
   return constrain(ph, 0.0f, 14.0f);
 }
 
-int readLightPercent() {
-  // LDR module: thường tối = ADC cao. Nếu bị ngược (đèn luôn sai), đảo map:
-  // return constrain(map(raw, 0, 4095, 0, 100), 0, 100);
-  int raw = (int)readAnalogAvg(PIN_LDR);
-  return constrain(map(raw, 4095, 0, 0, 100), 0, 100);
+// Đọc cảm biến quang digital (chân DO) → chỉ 0 hoặc 1
+int readLightDigital() {
+  int v = (digitalRead(PIN_LDR) == HIGH) ? 1 : 0;
+#if LIGHT_INVERT_DO
+  v = 1 - v;
+#endif
+  return v;
 }
 
 float readTDS(float tempC) {
@@ -473,10 +496,8 @@ void updateActuators() {
   } else if (lightMode == HC_OFF) {
     wantLight = false;          // ép tắt từ app
   } else {
-    // HC_AUTO: tối -> bật đèn trồng, đủ sáng -> tắt
-    if (hcLightPct < LIGHT_ON_BELOW_PCT)       wantLight = true;
-    else if (hcLightPct > LIGHT_OFF_ABOVE_PCT) wantLight = false;
-    else                                       wantLight = lightOn;  // hysteresis
+    // HC_AUTO: 0 → tắt đèn, 1 → bật đèn
+    wantLight = (hcLight == 1);
   }
   lightOn = wantLight;
   setRelay(PIN_LIGHT, lightOn); // Relay CH2
@@ -484,9 +505,9 @@ void updateActuators() {
   updateStatusMsg();
 
   if (prevPump != pumpOn || prevLight != lightOn) {
-    DBG("[ACT] *** DOI TRANG THAI  Bom %s->%s (mode=%d)  Den %s->%s (mode=%d LDR=%d%%)  Sys=%d\n",
+    DBG("[ACT] *** DOI TRANG THAI  Bom %s->%s (mode=%d)  Den %s->%s (mode=%d Light=%d)  Sys=%d\n",
         prevPump ? "ON" : "OFF", pumpOn ? "ON" : "OFF", (int)pumpMode,
-        prevLight ? "ON" : "OFF", lightOn ? "ON" : "OFF", (int)lightMode, hcLightPct,
+        prevLight ? "ON" : "OFF", lightOn ? "ON" : "OFF", (int)lightMode, hcLight,
         (int)systemEnabled);
   }
 }
@@ -502,7 +523,7 @@ void readSensors() {
   else DBG("[DHT] doc loi (nan)\n");
 
   hcPh = readPH();
-  hcLightPct = readLightPercent();
+  hcLight = readLightDigital();
 
   float d = readDistanceFilteredCm();
   if (d > 0.0f) updateWaterLevel(d);
@@ -511,64 +532,187 @@ void readSensors() {
   // Doc TDS de hien OLED/MQTT (neu co cam bien)
   if (ENABLE_TDS) hcTds = readTDS(hcTemp);
 
-  DBG("[SENSOR] T=%.1f H=%.0f pH=%.2f TDS=%.0f Light=%d%% Dist=%.1fcm Water=%.0f%% heap=%u\n",
-      hcTemp, hcHum, hcPh, hcTds, hcLightPct, hcDistCm, hcWaterPct, ESP.getFreeHeap());
+  DBG("[SENSOR] T=%.1f H=%.0f pH=%.2f TDS=%.0f Light=%d Dist=%.1fcm Water=%.0f%% heap=%u\n",
+      hcTemp, hcHum, hcPh, hcTds, hcLight, hcDistCm, hcWaterPct, ESP.getFreeHeap());
 
   if (!portalActive) updateActuators();
 }
 
-// Vẽ 1 dòng cố định độ rộng + nền đen → không nhấp nháy (không fillScreen)
-static void tftLine(int16_t y, uint16_t color, const char* text) {
-  tft.setTextColor(color, ST77XX_BLACK);
-  tft.setCursor(2, y);
+// Layout TFT 160x80 + nhấp nháy cảnh báo
+static void tftText(int16_t x, int16_t y, uint16_t fg, uint16_t bg, const char* text) {
+  tft.setTextColor(fg, bg);
+  tft.setCursor(x, y);
   tft.print(text);
+}
+
+static void drawPortalScreen() {
+  tft.fillScreen(ST77XX_BLACK);
+  tft.fillRect(0, 0, 160, 16, COL_ORANGE);
+  tft.setTextSize(1);
+  tftText(28, 4, ST77XX_BLACK, COL_ORANGE, "WIFI PORTAL");
+  tftText(8, 24, ST77XX_WHITE, ST77XX_BLACK, "SSID: ThuyCanh");
+  tftText(8, 38, ST77XX_CYAN, ST77XX_BLACK, "IP: 192.168.4.1");
+  tftText(8, 54, ST77XX_YELLOW, ST77XX_BLACK, "Mo trinh duyet");
+  tftText(8, 66, ST77XX_GREEN, ST77XX_BLACK, "de cai WiFi");
+}
+
+static void drawBootHoldProgress(uint16_t heldMs) {
+  uint16_t sec = heldMs / 1000;
+  if (sec > 3) sec = 3;
+  tft.fillRect(0, 64, 160, 16, COL_NAVY);
+  char buf[28];
+  snprintf(buf, sizeof(buf), "BOOT %us/3s xoa WiFi", (unsigned)sec);
+  tft.setTextSize(1);
+  tftText(6, 68, ST77XX_WHITE, COL_NAVY, buf);
+  // thanh tiến trình
+  int bar = (int)((heldMs * 148L) / BOOT_HOLD_MS);
+  if (bar > 148) bar = 148;
+  tft.fillRect(6, 62, bar, 2, ST77XX_YELLOW);
 }
 
 void drawOLED() {
   if (!tftOK) return;
-  if (millis() - lastTft < 1000) return;  // cập nhật 1s, mượt hơn
-  lastTft = millis();
 
-  tft.setTextSize(1);
-  tft.setTextWrap(false);
-
-  char line[28];
-
-  if (isnan(hcTemp) || isnan(hcHum))
-    snprintf(line, sizeof(line), "Temp: --.-C  Hum: --%%   ");
-  else
-    snprintf(line, sizeof(line), "Temp:%5.1fC  Hum:%3.0f%%  ", hcTemp, hcHum);
-  tftLine(4, ST77XX_CYAN, line);
-
-  if (isnan(hcPh))
-    snprintf(line, sizeof(line), "pH: --.--   Light: %3d%%  ", hcLightPct);
-  else
-    snprintf(line, sizeof(line), "pH: %5.2f   Light: %3d%%  ", hcPh, hcLightPct);
-  tftLine(18, ST77XX_GREEN, line);
-
-  if (isnan(hcDistCm))
-    snprintf(line, sizeof(line), "Dist: --.-cm  Water: --%% ");
-  else
-    snprintf(line, sizeof(line), "Dist:%5.1fcm  Water:%3.0f%% ", hcDistCm, hcWaterPct);
-  tftLine(32, ST77XX_YELLOW, line);
-
-  if (ENABLE_TDS) {
-    if (isnan(hcTds))
-      snprintf(line, sizeof(line), "TDS: ---- ppm            ");
-    else
-      snprintf(line, sizeof(line), "TDS: %4.0f ppm            ", hcTds);
-    tftLine(46, ST77XX_WHITE, line);
-  } else {
-    snprintf(line, sizeof(line), "Water alert: %-4s        ",
-             waterAlert == WA_FULL ? "DAY" : (waterAlert == WA_LOW ? "LOW" : "OK"));
-    tftLine(46, waterAlert == WA_LOW ? ST77XX_RED
-                  : (waterAlert == WA_FULL ? ST77XX_BLUE : ST77XX_WHITE), line);
+  // Portal: màn riêng
+  if (portalActive) {
+    if (millis() - lastTft < 800) return;
+    lastTft = millis();
+    drawPortalScreen();
+    // chấm nhấp nháy góc phải
+    if (millis() - lastTftBlink >= 400) {
+      lastTftBlink = millis();
+      tftBlinkOn = !tftBlinkOn;
+    }
+    tft.fillCircle(150, 8, 4, tftBlinkOn ? ST77XX_RED : ST77XX_BLACK);
+    return;
   }
 
-  // dòng trống cố định — xóa chữ cũ nếu từng hiện trạng thái
-  tftLine(60, ST77XX_BLACK, "                        ");
+  // Nhịp nhấp nháy 400ms
+  if (millis() - lastTftBlink >= 400) {
+    lastTftBlink = millis();
+    tftBlinkOn = !tftBlinkOn;
+  }
 
-  DBG("[TFT] sensor T=%.1f Dist=%.1f\n", hcTemp, hcDistCm);
+  // Vẽ lại layout mỗi 1s (hoặc khi đang giữ BOOT — cập nhật progress)
+  bool needFull = (millis() - lastTft >= 1000) || bootWasPressed;
+  if (!needFull && !bootWasPressed) {
+    // chỉ cập nhật vùng nhấp nháy (cảnh báo + trạng thái)
+    const bool alertBlink = (waterAlert != WA_OK);
+    if (alertBlink || pumpOn || lightOn) {
+      char line[22];
+      const char* al = (waterAlert == WA_FULL) ? "DAY" :
+                       (waterAlert == WA_LOW)  ? "LOW" : "OK";
+      uint16_t alFg = ST77XX_WHITE;
+      uint16_t alBg = ST77XX_BLACK;
+      if (waterAlert == WA_LOW) {
+        alFg = tftBlinkOn ? ST77XX_WHITE : ST77XX_RED;
+        alBg = tftBlinkOn ? ST77XX_RED : ST77XX_BLACK;
+      } else if (waterAlert == WA_FULL) {
+        alFg = tftBlinkOn ? ST77XX_WHITE : ST77XX_BLUE;
+        alBg = tftBlinkOn ? ST77XX_BLUE : ST77XX_BLACK;
+      }
+      tft.fillRect(0, 50, 160, 14, alBg);
+      snprintf(line, sizeof(line), "NUOC: %-3s  W:%3.0f%%", al, hcWaterPct);
+      tft.setTextSize(1);
+      tftText(4, 53, alFg, alBg, line);
+
+      // Bom/Den nhấp khi ON
+      tft.fillRect(0, 64, 160, 16, ST77XX_BLACK);
+      uint16_t pCol = pumpOn ? (tftBlinkOn ? ST77XX_GREEN : ST77XX_BLACK) : ST77XX_WHITE;
+      uint16_t lCol = lightOn ? (tftBlinkOn ? ST77XX_YELLOW : ST77XX_BLACK) : ST77XX_WHITE;
+      snprintf(line, sizeof(line), "Bom:");
+      tftText(4, 68, ST77XX_WHITE, ST77XX_BLACK, line);
+      tftText(30, 68, pCol, ST77XX_BLACK, pumpOn ? "ON " : "OFF");
+      tftText(70, 68, ST77XX_WHITE, ST77XX_BLACK, "Den:");
+      tftText(100, 68, lCol, ST77XX_BLACK, lightOn ? "ON " : "OFF");
+    }
+    return;
+  }
+  lastTft = millis();
+
+  // ===== LAYOUT FULL 160x80 =====
+  tft.fillScreen(ST77XX_BLACK);
+
+  // Header
+  tft.fillRect(0, 0, 160, 14, COL_DARKGREEN);
+  tft.setTextSize(1);
+  tftText(4, 3, ST77XX_WHITE, COL_DARKGREEN, "THUY CANH");
+  // chấm trạng thái WiFi/MQTT (nhấp)
+  bool netOk = (WiFi.status() == WL_CONNECTED);
+  bool mqttOk = mqttClient.isConnected();
+  uint16_t dot = (!netOk) ? ST77XX_RED : (mqttOk ? ST77XX_GREEN : ST77XX_YELLOW);
+  if (!tftBlinkOn && !mqttOk) dot = ST77XX_BLACK;
+  tft.fillCircle(150, 7, 4, dot);
+
+  char line[24];
+
+  // Hàng 1: Nhiệt độ | Độ ẩm
+  if (isnan(hcTemp))
+    snprintf(line, sizeof(line), "Temp --.-C");
+  else
+    snprintf(line, sizeof(line), "Temp %4.1fC", hcTemp);
+  tftText(4, 18, ST77XX_CYAN, ST77XX_BLACK, line);
+  if (isnan(hcHum))
+    snprintf(line, sizeof(line), "Hum --%%");
+  else
+    snprintf(line, sizeof(line), "Hum %3.0f%%", hcHum);
+  tftText(90, 18, ST77XX_CYAN, ST77XX_BLACK, line);
+
+  // Hàng 2: pH | Ánh sáng
+  if (isnan(hcPh))
+    snprintf(line, sizeof(line), "pH  --.--");
+  else
+    snprintf(line, sizeof(line), "pH  %5.2f", hcPh);
+  tftText(4, 30, ST77XX_GREEN, ST77XX_BLACK, line);
+  snprintf(line, sizeof(line), "Light %d", hcLight);  // 0=tat den, 1=bat den
+  tftText(90, 30, ST77XX_YELLOW, ST77XX_BLACK, line);
+
+  // Hàng 3: Dist | Water%
+  if (isnan(hcDistCm))
+    snprintf(line, sizeof(line), "Dist --.-cm");
+  else
+    snprintf(line, sizeof(line), "Dist %4.1fcm", hcDistCm);
+  tftText(4, 42, ST77XX_WHITE, ST77XX_BLACK, line);
+  snprintf(line, sizeof(line), "W %3.0f%%", hcWaterPct);
+  tftText(100, 42, ST77XX_WHITE, ST77XX_BLACK, line);
+
+  // Hàng 4: cảnh báo nước (nhấp khi LOW/DAY)
+  {
+    const char* al = (waterAlert == WA_FULL) ? "DAY" :
+                     (waterAlert == WA_LOW)  ? "LOW" : "OK";
+    uint16_t alFg = ST77XX_WHITE;
+    uint16_t alBg = ST77XX_BLACK;
+    if (waterAlert == WA_LOW) {
+      alFg = tftBlinkOn ? ST77XX_WHITE : ST77XX_RED;
+      alBg = tftBlinkOn ? ST77XX_RED : ST77XX_BLACK;
+    } else if (waterAlert == WA_FULL) {
+      alFg = tftBlinkOn ? ST77XX_WHITE : ST77XX_BLUE;
+      alBg = tftBlinkOn ? ST77XX_BLUE : ST77XX_BLACK;
+    }
+    tft.fillRect(0, 52, 160, 12, alBg);
+    if (ENABLE_TDS)
+      snprintf(line, sizeof(line), "TDS %4.0f  NUOC %-3s", hcTds, al);
+    else
+      snprintf(line, sizeof(line), "NUOC: %-3s", al);
+    tftText(4, 54, alFg, alBg, line);
+  }
+
+  // Hàng 5: Bom / Den
+  {
+    uint16_t pCol = pumpOn ? (tftBlinkOn ? ST77XX_GREEN : COL_DARKGREY) : ST77XX_WHITE;
+    uint16_t lCol = lightOn ? (tftBlinkOn ? ST77XX_YELLOW : COL_DARKGREY) : ST77XX_WHITE;
+    tftText(4, 68, ST77XX_WHITE, ST77XX_BLACK, "Bom:");
+    tftText(30, 68, pCol, ST77XX_BLACK, pumpOn ? "ON " : "OFF");
+    tftText(70, 68, ST77XX_WHITE, ST77XX_BLACK, "Den:");
+    tftText(100, 68, lCol, ST77XX_BLACK, lightOn ? "ON " : "OFF");
+  }
+
+  if (bootWasPressed) {
+    drawBootHoldProgress(millis() - bootPressStart);
+  }
+
+  DBG("[TFT] T=%.1f H=%.0f pH=%.2f Dist=%.1f Light=%d Bom=%d Den=%d\n",
+      hcTemp, hcHum, hcPh, hcDistCm, hcLight, (int)pumpOn, (int)lightOn);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -735,7 +879,8 @@ void pubWaterAlert() {
   mqttPub(DEV_WATER_AL, "{\"value\":\"" + String(al) + "\"}", true);
 }
 void pubLight() {
-  mqttPub(DEV_LIGHT, "{\"value\":" + String(hcLightPct) + "}", true);
+  // Gửi 0 hoặc 1
+  mqttPub(DEV_LIGHT, "{\"value\":" + String(hcLight) + "}", true);
 }
 void pubPump() {
   mqttPub(DEV_PUMP, pumpOn ? "{\"value\":\"ON\"}" : "{\"value\":\"OFF\"}", true);
@@ -1019,24 +1164,52 @@ void startPortal() {
 
   Serial.println("[PORTAL] Vao WiFi 'ThuyCanh' → http://192.168.4.1");
   statusMsg = "Cau hinh mang";
+  lastTft = 0;
+  if (tftOK) drawPortalScreen();
 }
 
 void checkBootButtonForPortal() {
+  // Giữ nút BOOT (GPIO0) 3 giây → xóa WiFi EEPROM + mở portal AP "ThuyCanh"
   bool pressed = (digitalRead(PIN_BOOT_BTN) == LOW);
   if (pressed) {
     if (!bootWasPressed) {
       bootWasPressed = true;
+      bootHoldUiShown = false;
       bootPressStart = millis();
-    } else if (millis() - bootPressStart >= BOOT_HOLD_MS) {
+      Serial.println("[BOOT] Dang giu BOOT — giu 3s de xoa WiFi + vao Portal");
+    }
+    unsigned long held = millis() - bootPressStart;
+    // cập nhật progress trên TFT mỗi ~200ms
+    if (tftOK && (held / 200) != ((held - 1) / 200)) {
+      drawBootHoldProgress(held);
+      bootHoldUiShown = true;
+    }
+    if (held >= BOOT_HOLD_MS) {
+      Serial.println("[BOOT] *** 3s — XOA WiFi + MO PORTAL");
       wifiCount = 0;
       memset(wifiList, 0, sizeof(wifiList));
       saveWifiList();
       WiFi.disconnect(true);
-      startPortal();
       bootWasPressed = false;
+      bootHoldUiShown = false;
+      if (tftOK) {
+        tft.fillScreen(ST77XX_BLACK);
+        tft.setTextSize(1);
+        tftText(10, 30, ST77XX_YELLOW, ST77XX_BLACK, "Da xoa WiFi...");
+        tftText(10, 46, ST77XX_CYAN, ST77XX_BLACK, "Mo Portal...");
+        delay(400);
+      }
+      startPortal();
+      lastTft = 0;
+      if (tftOK) drawPortalScreen();
     }
   } else {
+    if (bootWasPressed) {
+      Serial.printf("[BOOT] Tha som (%lums) — khong xoa WiFi\n",
+                    (unsigned long)(millis() - bootPressStart));
+    }
     bootWasPressed = false;
+    bootHoldUiShown = false;
   }
 }
 
@@ -1063,18 +1236,18 @@ void clearDoubleResetFlag() {
 void debugPrintPinMap() {
   Serial.println("---------- PIN MAP (DEBUG) ----------");
   Serial.printf("  DHT22      GPIO %d\n", PIN_DHT);
-  Serial.printf("  LDR        GPIO %d\n", PIN_LDR);
+  Serial.printf("  LDR (DO)   GPIO %d  digital 0/1  invert=%d\n", PIN_LDR, LIGHT_INVERT_DO);
   Serial.printf("  pH         GPIO %d\n", PIN_PH);
   Serial.printf("  TDS        GPIO %d (ENABLE=%d)\n", PIN_TDS, (int)ENABLE_TDS);
   Serial.printf("  HC-SR04    TRIG %d  ECHO %d\n", PIN_TRIG, PIN_ECHO);
-  Serial.printf("  TFT SPI    SCL=%d SDA/MOSI=%d RES=%d DC=%d CS=GND BLK=3.3V\n",
-                TFT_SCLK, TFT_MOSI, TFT_RST, TFT_DC);
+  Serial.printf("  TFT SPI    SCL=%d SDA/MOSI=%d RES=%d DC=%d CS=%d BLK=%d\n",
+                TFT_SCLK, TFT_MOSI, TFT_RST, TFT_DC, TFT_CS, TFT_BLK);
   Serial.printf("  Relay CH1  BOM  GPIO %d\n", PIN_PUMP);
   Serial.printf("  Relay CH2  DEN  GPIO %d\n", PIN_LIGHT);
   Serial.printf("  CHIP_ID    %s\n", CHIP_ID);
   Serial.printf("  MQTT       %s:%d%s\n", MQTT_HOST, MQTT_PORT, MQTT_PATH);
   Serial.printf("  Water      FULL<=%.0fcm  EMPTY>=%.0fcm\n", DIST_FULL_CM, DIST_EMPTY_CM);
-  Serial.printf("  Light AUTO ON<%d%% OFF>%d%%\n", LIGHT_ON_BELOW_PCT, LIGHT_OFF_ABOVE_PCT);
+  Serial.println("  Light AUTO: 0->tat den, 1->bat den");
   Serial.printf("  DEBUG_SERIAL=%d\n", DEBUG_SERIAL);
   Serial.println("-------------------------------------");
 }
@@ -1093,6 +1266,7 @@ void setup() {
   debugPrintPinMap();
 
   pinMode(PIN_BOOT_BTN, INPUT_PULLUP);
+  pinMode(PIN_LDR, INPUT);   // quang digital DO → 0/1
   pinMode(PIN_TRIG, OUTPUT);
   pinMode(PIN_ECHO, INPUT);
   pinMode(PIN_PUMP, OUTPUT);
@@ -1107,11 +1281,34 @@ void setup() {
   dht.begin();
   DBG_LN("[SETUP] DHT22 begin");
 
-  // ----- TFT ST7735 SPI 80x160 -----
-  // CS -> GND, BLK -> 3.3V (không dùng GPIO ESP32)
+  // ----- TFT ST7735 80x160 -----
+  // SCL=D22 SDA=D21 RES=17 DC=D16 CS=D5 BLK=D15
+  pinMode(TFT_BLK, OUTPUT);
+  digitalWrite(TFT_BLK, HIGH);  // đèn nền ON (thấy sáng = BLK OK)
 
-  Serial.println("[TFT] Init ST7735 80x160 SPI ...");
-  Serial.println("  GND->GND VCC->3.3V SCL->22 SDA->21 RES->17 DC->18 CS->GND BLK->3.3V");
+  // Reset cứng chân RES
+  pinMode(TFT_RST, OUTPUT);
+  digitalWrite(TFT_RST, HIGH);
+  delay(10);
+  digitalWrite(TFT_RST, LOW);
+  delay(20);
+  digitalWrite(TFT_RST, HIGH);
+  delay(120);
+
+  pinMode(TFT_CS, OUTPUT);
+  digitalWrite(TFT_CS, HIGH);
+  pinMode(TFT_DC, OUTPUT);
+  digitalWrite(TFT_DC, HIGH);
+
+#if !TFT_SOFT_SPI
+  spiTFT.begin(TFT_SCLK, TFT_MISO, TFT_MOSI, TFT_CS);
+  delay(20);
+  Serial.println("[TFT] Init HSPI ...");
+#else
+  Serial.println("[TFT] Init SOFTWARE SPI ...");
+#endif
+  Serial.println("  SCL->22 SDA->21 RES->17 DC->16 CS->5 BLK->15");
+  Serial.println("  Neu sang nhung KHONG thay mau: sai DC/RES/SDA hoac INIT_MODE");
 
 #if TFT_INIT_MODE == 1
   tft.initR(INITR_MINI160x80_PLUGIN);
@@ -1124,14 +1321,45 @@ void setup() {
   Serial.println("[TFT] initR MINI160x80");
 #endif
 
-  tft.setRotation(1);  // ngang 160x80
+  tft.setSPISpeed(TFT_SPI_HZ);
+  tft.setRotation(1);  // 160x80 ngang
 #if TFT_INVERT
   tft.invertDisplay(true);
+  Serial.println("[TFT] invert ON");
+#else
+  tft.invertDisplay(false);
+  Serial.println("[TFT] invert OFF");
 #endif
-  tft.fillScreen(ST77XX_BLACK);  // chỉ xóa 1 lần lúc khởi động
+
+  // Test bắt buộc: phải thấy ĐỎ/TRẮNG. Không thấy = SPI/chân data lỗi
+#if TFT_BOOT_FLASH
+  Serial.println("[TFT] flash RED...");
+  tft.fillScreen(ST77XX_RED);
+  delay(400);
+  Serial.println("[TFT] flash WHITE...");
+  tft.fillScreen(ST77XX_WHITE);
+  delay(400);
+  Serial.println("[TFT] flash BLUE...");
+  tft.fillScreen(ST77XX_BLUE);
+  delay(400);
+#endif
+
+  // Chữ đen trên nền trắng — dễ nhìn nhất
+  tft.fillScreen(ST77XX_WHITE);
+  tft.setTextWrap(false);
+  tft.setTextSize(2);
+  tft.setTextColor(ST77XX_BLACK, ST77XX_WHITE);
+  tft.setCursor(8, 18);
+  tft.print("TFT OK");
+  tft.setTextSize(1);
+  tft.setCursor(8, 48);
+  tft.print("Cho cam bien...");
+  delay(1200);
+
   tftOK = true;
-  Serial.println("[TFT] OK — chi hien cam bien, khong fillScreen moi lan ve");
   lastTft = 0;
+  drawOLED();  // vẽ thông số ngay lần đầu
+  Serial.println("[TFT] OK — neu chi sang trang/khong chu: doi INIT_MODE/INVERT");
 
   // WiFi / Portal TRƯỚC WSS — AP lên nhanh, không chờ SSL
   loadWifiList();
@@ -1259,8 +1487,8 @@ void loop() {
                   mqttClient.isConnected(),
                   wsClient.isConnected(),
                   ESP.getFreeHeap());
-    Serial.printf("  T=%.1fC  H=%.0f%%  pH=%.2f  TDS=%.0f  Light=%d%%\n",
-                  hcTemp, hcHum, hcPh, hcTds, hcLightPct);
+    Serial.printf("  T=%.1fC  H=%.0f%%  pH=%.2f  TDS=%.0f  Light=%d\n",
+                  hcTemp, hcHum, hcPh, hcTds, hcLight);
     Serial.printf("  Dist=%.1fcm  Water=%.0f%%  alert=%s\n",
                   hcDistCm, hcWaterPct, al);
     Serial.printf("  Bom=%s (mode=%d)  Den=%s (mode=%d)  Sys=%s\n",

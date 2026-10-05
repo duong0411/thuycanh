@@ -62,34 +62,28 @@ class _LoginPageState extends State<LoginPage> {
       body: Container(
         width: double.infinity,
         height: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF0C261A), HydroTheme.deep, Color(0xFF05140F)],
-          ),
-        ),
+        decoration: HydroTheme.screenGradient(),
         child: Stack(
           children: [
             Positioned(
-              top: -90,
-              right: -50,
-              child: _blob(240, HydroTheme.leaf.withValues(alpha: 0.14))
+              top: -100,
+              right: -60,
+              child: _blob(260, HydroTheme.leaf.withValues(alpha: 0.13))
                   .animate(onPlay: (c) => c.repeat(reverse: true))
                   .scale(
                     begin: const Offset(0.95, 0.95),
-                    end: const Offset(1.08, 1.08),
-                    duration: 5.seconds,
+                    end: const Offset(1.07, 1.07),
+                    duration: 6.seconds,
                   ),
             ),
             Positioned(
-              bottom: 60,
-              left: -50,
-              child: _blob(200, HydroTheme.water.withValues(alpha: 0.1)),
+              bottom: 40,
+              left: -60,
+              child: _blob(210, HydroTheme.water.withValues(alpha: 0.1)),
             ),
             SafeArea(
               child: ListView(
-                padding: EdgeInsets.fromLTRB(28, h * 0.07, 28, 28),
+                padding: EdgeInsets.fromLTRB(28, h * 0.08, 28, 28),
                 children: [
                   Text(
                     'THỦY CANH',
@@ -101,14 +95,14 @@ class _LoginPageState extends State<LoginPage> {
                   ).animate().fadeIn(duration: 450.ms).slideY(begin: 0.1),
                   const SizedBox(height: 12),
                   Text(
-                    'Theo dõi dinh dưỡng và mực nước\nhệ thống thủy canh IoT STEM.',
+                    'Giám sát mực nước, pH và môi trường\nhệ thống thủy canh IoT STEM.',
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          color: HydroTheme.water.withValues(alpha: 0.9),
+                          color: HydroTheme.water.withValues(alpha: 0.92),
                           height: 1.45,
                           fontSize: 16,
                         ),
                   ).animate().fadeIn(delay: 80.ms),
-                  SizedBox(height: h * 0.055),
+                  SizedBox(height: h * 0.06),
                   _field(
                     controller: _email,
                     label: 'Email',
@@ -133,11 +127,10 @@ class _LoginPageState extends State<LoginPage> {
                     alignment: Alignment.centerRight,
                     child: TextButton(
                       onPressed: () async {
-                        final nav = Navigator.of(context);
-                        final changed = await nav.push<bool>(
+                        final changed = await Navigator.of(context).push<bool>(
                           MaterialPageRoute(builder: (_) => const ForgotPasswordPage()),
                         );
-                        if (!mounted) return;
+                        if (!context.mounted) return;
                         if (changed == true) {
                           showAppSnack(
                             context,
@@ -156,7 +149,7 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
                   SizedBox(
                     height: 56,
                     child: FilledButton(
@@ -181,7 +174,7 @@ class _LoginPageState extends State<LoginPage> {
                             ),
                     ),
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 20),
                   Center(
                     child: TextButton(
                       onPressed: () {
@@ -248,7 +241,7 @@ class _LoginPageState extends State<LoginPage> {
         prefixIcon: Icon(icon, color: HydroTheme.leaf.withValues(alpha: 0.9)),
         suffixIcon: suffix,
         filled: true,
-        fillColor: Colors.white.withValues(alpha: 0.06),
+        fillColor: Colors.white.withValues(alpha: 0.05),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(18),

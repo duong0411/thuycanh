@@ -88,13 +88,7 @@ class _ConnectPageState extends State<ConnectPage> {
       body: Container(
         width: double.infinity,
         height: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF0C261A), HydroTheme.deep, Color(0xFF05140F)],
-          ),
-        ),
+        decoration: HydroTheme.screenGradient(),
         child: Stack(
           children: [
             Positioned(
@@ -152,7 +146,7 @@ class _ConnectPageState extends State<ConnectPage> {
                   ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.08),
                   const SizedBox(height: 10),
                   Text(
-                    'Nhập tên chip trên máy để theo dõi dinh dưỡng và mực nước.',
+                    'Nhập tên chip trên máy để theo dõi mực nước, pH và môi trường trồng.',
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                           color: HydroTheme.water.withValues(alpha: 0.92),
                           height: 1.45,
