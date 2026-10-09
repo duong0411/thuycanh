@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import 'auth_service.dart';
+import 'background_monitor.dart';
 import 'config.dart';
 import 'models/user_model.dart';
 import 'node_service.dart';
@@ -31,13 +32,14 @@ class AuthProvider extends ChangeNotifier {
   Future<void> bootstrap() async {
     booting = true;
     notifyListeners();
+    String? savedChip;
     try {
-      final savedChip = await _auth.loadSavedChipId();
+      savedChip = await _auth.loadSavedChipId();
       if (savedChip != null && savedChip.isNotEmpty) {
         AppConfig.setChipId(savedChip);
       }
       user = await _auth.loadSavedUser();
-      if (user != null && AppConfig.chipId.isNotEmpty) {
+      if (user != null && savedChip != null && savedChip.isNotEmpty) {
         await _ensureDevice(AppConfig.chipId);
       }
     } catch (e) {
@@ -45,6 +47,9 @@ class AuthProvider extends ChangeNotifier {
     }
     booting = false;
     notifyListeners();
+    await _syncPhoneAlerts(
+      enabled: user != null && savedChip != null && savedChip.isNotEmpty,
+    );
   }
 
   Future<void> _ensureDevice(String chipId) async {
@@ -130,6 +135,7 @@ class AuthProvider extends ChangeNotifier {
     await _auth.saveChipId(AppConfig.chipId);
     await _ensureDevice(AppConfig.chipId);
     notifyListeners();
+    await _syncPhoneAlerts(enabled: true);
   }
 
   Future<void> clearBoundChip() async {
@@ -137,6 +143,7 @@ class AuthProvider extends ChangeNotifier {
     nodeId = null;
     nodeName = null;
     notifyListeners();
+    await _syncPhoneAlerts(enabled: false);
   }
 
   String _randomPhoneForBackend() {
@@ -150,6 +157,7 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    await _syncPhoneAlerts(enabled: false);
     await _auth.logout();
     user = null;
     _pendingUser = null;
@@ -157,6 +165,14 @@ class AuthProvider extends ChangeNotifier {
     nodeName = null;
     successBanner = null;
     notifyListeners();
+  }
+
+  Future<void> _syncPhoneAlerts({required bool enabled}) async {
+    try {
+      await BackgroundMonitor.sync(enabled: enabled);
+    } catch (e) {
+      if (kDebugMode) print('Phone alert sync: $e');
+    }
   }
 
   DateTime? _lastSync;

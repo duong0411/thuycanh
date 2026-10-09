@@ -35,6 +35,10 @@ class AppConfig {
   static const double distFullCm = 11;
   static const double distEmptyCm = 18;
 
+  /// Khoảng pH an toàn — khớp firmware (ngoài khoảng thì cảnh báo)
+  static const double phLow = 5.5;
+  static const double phHigh = 6.5;
+
   static List<String> get subscribeTopics => [
         topicOnline,
         topicTemp,

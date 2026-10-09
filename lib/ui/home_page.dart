@@ -110,6 +110,15 @@ class HomePage extends StatelessWidget {
                                     color: HydroTheme.soft.withValues(alpha: 0.7),
                                   ),
                             ),
+                            const SizedBox(height: 6),
+                            Text(
+                              'Điện thoại báo khi mực nước đầy, cạn hoặc pH lệch — kể cả lúc tắt app.',
+                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    fontSize: 12.5,
+                                    height: 1.35,
+                                    color: HydroTheme.water.withValues(alpha: 0.72),
+                                  ),
+                            ),
                           ],
                         ),
                       ),

@@ -3,14 +3,18 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'core/auth_provider.dart';
+import 'core/background_monitor.dart';
+import 'core/hydro_notifications.dart';
 import 'core/hydro_provider.dart';
 import 'ui/connect_page.dart';
 import 'ui/home_page.dart';
 import 'ui/login_page.dart';
 import 'ui/theme.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await HydroNotifications.init();
+  await BackgroundMonitor.configure();
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,

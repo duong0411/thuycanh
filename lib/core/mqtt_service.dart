@@ -8,6 +8,19 @@ import 'package:mqtt_client/mqtt_server_client.dart';
 import 'config.dart';
 
 class MqttService {
+  MqttService({
+    this.clientPrefix = 'thuycanh',
+    this.publishPresence = true,
+  });
+
+  final String clientPrefix;
+
+  /// App chính báo online/offline. Tiến trình nền chỉ nghe, không đè trạng thái app.
+  final bool publishPresence;
+
+  /// Gọi khi socket MQTT lên (lần đầu hoặc tự nối lại) — dùng để báo lại cảnh báo đang có.
+  void Function()? onConnectedHook;
+
   MqttServerClient? _client;
   StreamSubscription<List<MqttReceivedMessage<MqttMessage?>>>? _updatesSub;
   bool _connecting = false;
@@ -41,7 +54,7 @@ class MqttService {
     final host = uri.host.isNotEmpty ? uri.host : 'mqtt.duynguyen.io.vn';
     final port = uri.port != 0 ? uri.port : 443;
     final path = uri.path.isNotEmpty ? uri.path : '/mqtt';
-    clientId = 'thuycanh_${DateTime.now().millisecondsSinceEpoch}';
+    clientId = '${clientPrefix}_${DateTime.now().millisecondsSinceEpoch}';
 
     final wsUrl = '$scheme://$host$path';
     if (kDebugMode) print('MQTT: connecting $wsUrl');
@@ -59,7 +72,9 @@ class MqttService {
 
     client.onConnected = () {
       _isConnected = true;
+      _listen();
       _subscribeAll();
+      onConnectedHook?.call();
       if (kDebugMode) print('MQTT: connected $clientId');
     };
     client.onDisconnected = () {
@@ -70,15 +85,18 @@ class MqttService {
       _isConnected = true;
       _listen();
       _subscribeAll();
+      onConnectedHook?.call();
       if (kDebugMode) print('MQTT: auto-reconnected');
     };
 
-    client.connectionMessage = MqttConnectMessage()
-        .withClientIdentifier(clientId)
-        .startClean()
-        .withWillTopic('tele/thuycanh_app/status')
-        .withWillMessage('offline')
-        .withWillQos(MqttQos.atLeastOnce);
+    final connMsg = MqttConnectMessage().withClientIdentifier(clientId).startClean();
+    if (publishPresence) {
+      connMsg
+          .withWillTopic('tele/${clientPrefix}_app/status')
+          .withWillMessage('offline')
+          .withWillQos(MqttQos.atLeastOnce);
+    }
+    client.connectionMessage = connMsg;
 
     try {
       await client.connect().timeout(const Duration(seconds: 18));
@@ -102,7 +120,9 @@ class MqttService {
 
     _listen();
     _subscribeAll();
-    publish('tele/thuycanh_app/status', 'online');
+    if (publishPresence) {
+      publish('tele/${clientPrefix}_app/status', 'online');
+    }
     return true;
   }
 

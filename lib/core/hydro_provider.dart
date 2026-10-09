@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import 'alert_dispatcher.dart';
 import 'config.dart';
 import 'mqtt_service.dart';
 
@@ -11,7 +12,9 @@ typedef TelemetrySync = Future<void> Function(Map<String, dynamic> state);
 
 /// Provider riêng cho thủy canh — không dùng biến của máy Ngưng Tụ.
 class HydroProvider extends ChangeNotifier {
-  HydroProvider({MqttService? mqtt}) : _mqtt = mqtt ?? MqttService();
+  HydroProvider({MqttService? mqtt}) : _mqtt = mqtt ?? MqttService() {
+    _mqtt.onConnectedHook = AlertDispatcher.markReconnect;
+  }
 
   final MqttService _mqtt;
   StreamSubscription? _sub;
@@ -119,6 +122,7 @@ class HydroProvider extends ChangeNotifier {
     notifyListeners();
 
     _sub ??= _mqtt.messages.listen(_onMessage);
+    AlertDispatcher.markReconnect();
 
     final ok = await _mqtt.connect(force: force);
     connecting = false;
@@ -185,6 +189,7 @@ class HydroProvider extends ChangeNotifier {
     waterAlert = WaterAlertLevel.ok;
     lastUpdate = null;
     status = 'Đã ngắt thiết bị — nhập tên chip để kết nối lại';
+    AlertDispatcher.reset();
     notifyListeners();
   }
 
@@ -265,6 +270,7 @@ class HydroProvider extends ChangeNotifier {
     }
 
     lastUpdate = DateTime.now();
+    AlertDispatcher.onUiMessage(topic, value);
     notifyListeners();
 
     if (hasTelemetry && onTelemetry != null) {
