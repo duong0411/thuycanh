@@ -8,6 +8,9 @@ import 'mqtt_service.dart';
 
 enum WaterAlertLevel { ok, full, low }
 
+/// Chế độ điều khiển bơm/đèn gửi xuống ESP32 (khớp firmware HC_AUTO / HC_ON / HC_OFF).
+enum ActuatorMode { auto, on, off }
+
 typedef TelemetrySync = Future<void> Function(Map<String, dynamic> state);
 
 /// Provider riêng cho thủy canh — không dùng biến của máy Ngưng Tụ.
@@ -38,6 +41,12 @@ class HydroProvider extends ChangeNotifier {
   int? lightLevel;
   bool pumpOn = false;
   bool lampOn = false;
+
+  /// true = bơm/đèn theo cảm biến; false = bật/tắt thủ công trên app.
+  bool sensorAutoMode = true;
+  ActuatorMode pumpMode = ActuatorMode.auto;
+  ActuatorMode lampMode = ActuatorMode.auto;
+
   WaterAlertLevel waterAlert = WaterAlertLevel.ok;
   String status = 'Chưa kết nối';
 
@@ -137,9 +146,9 @@ class HydroProvider extends ChangeNotifier {
         : 'Đã sẵn sàng';
     notifyListeners();
 
-    // App chỉ theo dõi — bơm/đèn luôn AUTO theo cảm biến (không ép tay)
+    // Đồng bộ chế độ điều khiển hiện tại xuống ESP32 (AUTO hoặc ON/OFF thủ công)
     if (chipBound && ok) {
-      ensureSensorAutoControl();
+      applyControlModes();
     }
   }
 
@@ -164,6 +173,9 @@ class HydroProvider extends ChangeNotifier {
     lightLevel = null;
     pumpOn = false;
     lampOn = false;
+    sensorAutoMode = true;
+    pumpMode = ActuatorMode.auto;
+    lampMode = ActuatorMode.auto;
     waterAlert = WaterAlertLevel.ok;
     lastUpdate = null;
     status = 'Đang kết nối máy ${AppConfig.chipId}...';
@@ -186,6 +198,9 @@ class HydroProvider extends ChangeNotifier {
     lightLevel = null;
     pumpOn = false;
     lampOn = false;
+    sensorAutoMode = true;
+    pumpMode = ActuatorMode.auto;
+    lampMode = ActuatorMode.auto;
     waterAlert = WaterAlertLevel.ok;
     lastUpdate = null;
     status = 'Đã ngắt thiết bị — nhập tên chip để kết nối lại';
@@ -222,7 +237,7 @@ class HydroProvider extends ChangeNotifier {
         final wasVerified = chipVerified;
         _markChipVerified();
         status = hasTelemetry ? 'OK' : 'Máy ${AppConfig.chipId} đã sẵn sàng';
-        if (!wasVerified) ensureSensorAutoControl();
+        if (!wasVerified) applyControlModes();
       } else {
         online = false;
         status = 'Máy ${AppConfig.chipId} tạm offline — chờ kết nối lại';
@@ -323,15 +338,83 @@ class HydroProvider extends ChangeNotifier {
 
   bool _is(String topic, String expected) => topic == expected;
 
-  /// Ép firmware về AUTO: bơm theo mực nước, đèn theo LDR.
-  void ensureSensorAutoControl() {
+  String _modeToCmd(ActuatorMode mode) {
+    switch (mode) {
+      case ActuatorMode.auto:
+        return 'AUTO';
+      case ActuatorMode.on:
+        return 'ON';
+      case ActuatorMode.off:
+        return 'OFF';
+    }
+  }
+
+  /// Gửi lại chế độ đang chọn xuống ESP32 (sau kết nối / online).
+  void applyControlModes() {
     if (!_mqtt.isConnected) return;
     if (!powerOn) {
       powerOn = true;
       _mqtt.setPower(true);
     }
-    _mqtt.setPump('AUTO');
-    _mqtt.setLamp('AUTO');
+    _mqtt.setPump(_modeToCmd(pumpMode));
+    _mqtt.setLamp(_modeToCmd(lampMode));
+  }
+
+  /// Chế độ Auto theo cảm biến (bơm theo mực nước, đèn theo LDR).
+  void setSensorAutoMode() {
+    sensorAutoMode = true;
+    pumpMode = ActuatorMode.auto;
+    lampMode = ActuatorMode.auto;
+    applyControlModes();
+    status = 'Chế độ Auto — bơm/đèn theo cảm biến';
+    notifyListeners();
+  }
+
+  /// Chế độ thủ công: giữ trạng thái ON/OFF hiện tại làm điểm bắt đầu.
+  void setManualMode() {
+    sensorAutoMode = false;
+    pumpMode = pumpOn ? ActuatorMode.on : ActuatorMode.off;
+    lampMode = lampOn ? ActuatorMode.on : ActuatorMode.off;
+    applyControlModes();
+    status = 'Chế độ thủ công — bật/tắt trên app';
+    notifyListeners();
+  }
+
+  void setPumpManual(bool on) {
+    sensorAutoMode = false;
+    if (lampMode == ActuatorMode.auto) {
+      lampMode = lampOn ? ActuatorMode.on : ActuatorMode.off;
+      if (_mqtt.isConnected) _mqtt.setLamp(_modeToCmd(lampMode));
+    }
+    pumpMode = on ? ActuatorMode.on : ActuatorMode.off;
+    if (!_mqtt.isConnected) {
+      notifyListeners();
+      return;
+    }
+    _mqtt.setPump(_modeToCmd(pumpMode));
+    // Optimistic UI — ESP32 vẫn có thể tắt bơm nếu nước LOW (an toàn).
+    pumpOn = on && !isWaterLow;
+    status = on
+        ? (isWaterLow ? 'Bơm: yêu cầu ON (máy giữ tắt vì nước thấp)' : 'Bơm: bật thủ công')
+        : 'Bơm: tắt thủ công';
+    notifyListeners();
+  }
+
+  void setLampManual(bool on) {
+    sensorAutoMode = false;
+    if (pumpMode == ActuatorMode.auto) {
+      pumpMode = pumpOn ? ActuatorMode.on : ActuatorMode.off;
+      if (_mqtt.isConnected) _mqtt.setPump(_modeToCmd(pumpMode));
+    }
+    lampMode = on ? ActuatorMode.on : ActuatorMode.off;
+    if (!_mqtt.isConnected) {
+      notifyListeners();
+      return;
+    }
+    _mqtt.setLamp(_modeToCmd(lampMode));
+    lampOn = on;
+    status = on ? 'Đèn: bật thủ công' : 'Đèn: tắt thủ công';
+    notifyListeners();
   }
 
   Future<void> reconnect() => start(force: true);

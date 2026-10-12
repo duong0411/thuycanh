@@ -209,7 +209,7 @@ class HomePage extends StatelessWidget {
                       ),
                     ),
 
-                    // Tự động
+                    // Điều khiển bơm / đèn
                     SliverToBoxAdapter(
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(24, 22, 24, 36),
@@ -217,13 +217,28 @@ class HomePage extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Tự động theo cảm biến',
+                              'Điều khiển bơm & đèn',
                               style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 19),
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'Máy tự chỉnh — app chỉ theo dõi trạng thái.',
+                              h.sensorAutoMode
+                                  ? 'Auto: máy tự chỉnh theo cảm biến mực nước và ánh sáng.'
+                                  : 'Thủ công: bật/tắt bơm và đèn trên app (máy vẫn tắt bơm nếu nước thấp).',
                               style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 13),
+                            ),
+                            const SizedBox(height: 14),
+                            _ControlModeSwitch(
+                              auto: h.sensorAutoMode,
+                              enabled: live,
+                              onAuto: () {
+                                context.read<HydroProvider>().setSensorAutoMode();
+                                showAppSnack(context, message: 'Đã chuyển Auto theo cảm biến');
+                              },
+                              onManual: () {
+                                context.read<HydroProvider>().setManualMode();
+                                showAppSnack(context, message: 'Đã chuyển chế độ thủ công');
+                              },
                             ),
                             const SizedBox(height: 14),
                             _ActuatorTile(
@@ -231,13 +246,22 @@ class HomePage extends StatelessWidget {
                               active: h.pumpOn,
                               color: HydroTheme.water,
                               icon: Icons.waves_rounded,
-                              detail: h.isWaterLow
-                                  ? 'Nước thấp — bơm tắt, hãy đổ nước'
-                                  : h.isWaterFull
-                                      ? 'Nước đầy — bơm đang tuần hoàn'
-                                      : h.pumpOn
-                                          ? 'Đang chạy theo mực nước'
-                                          : 'Đang nghỉ',
+                              manual: !h.sensorAutoMode,
+                              enabled: live,
+                              detail: !h.sensorAutoMode
+                                  ? (h.isWaterLow
+                                      ? 'Thủ công — nước thấp: máy giữ tắt bơm'
+                                      : (h.pumpOn ? 'Thủ công — đang bật' : 'Thủ công — đang tắt'))
+                                  : h.isWaterLow
+                                      ? 'Auto — nước thấp, bơm tắt, hãy đổ nước'
+                                      : h.isWaterFull
+                                          ? 'Auto — nước đầy, bơm đang tuần hoàn'
+                                          : h.pumpOn
+                                              ? 'Auto — đang chạy theo mực nước'
+                                              : 'Auto — đang nghỉ',
+                              onChanged: live && !h.sensorAutoMode
+                                  ? (v) => context.read<HydroProvider>().setPumpManual(v)
+                                  : null,
                             ),
                             const SizedBox(height: 10),
                             _ActuatorTile(
@@ -245,11 +269,18 @@ class HomePage extends StatelessWidget {
                               active: h.lampOn,
                               color: HydroTheme.sun,
                               icon: Icons.lightbulb_outline_rounded,
-                              detail: h.lightLevel == null
-                                  ? (h.lampOn ? 'Đèn đang bật' : 'Đèn đang tắt')
-                                  : h.isDark
-                                      ? 'Trời tối (1) — đèn bật'
-                                      : 'Đủ sáng (0) — đèn tắt',
+                              manual: !h.sensorAutoMode,
+                              enabled: live,
+                              detail: !h.sensorAutoMode
+                                  ? (h.lampOn ? 'Thủ công — đang bật' : 'Thủ công — đang tắt')
+                                  : h.lightLevel == null
+                                      ? (h.lampOn ? 'Auto — đèn đang bật' : 'Auto — đèn đang tắt')
+                                      : h.isDark
+                                          ? 'Auto — trời tối (1), đèn bật'
+                                          : 'Auto — đủ sáng (0), đèn tắt',
+                              onChanged: live && !h.sensorAutoMode
+                                  ? (v) => context.read<HydroProvider>().setLampManual(v)
+                                  : null,
                             ),
                             const SizedBox(height: 18),
                             _FooterStatus(h: h, live: live),
@@ -630,6 +661,90 @@ class _MetricTile extends StatelessWidget {
   }
 }
 
+class _ControlModeSwitch extends StatelessWidget {
+  const _ControlModeSwitch({
+    required this.auto,
+    required this.enabled,
+    required this.onAuto,
+    required this.onManual,
+  });
+
+  final bool auto;
+  final bool enabled;
+  final VoidCallback onAuto;
+  final VoidCallback onManual;
+
+  @override
+  Widget build(BuildContext context) {
+    return Opacity(
+      opacity: enabled ? 1 : 0.55,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          color: Colors.white.withValues(alpha: 0.04),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: _ModeChip(
+                label: 'Auto cảm biến',
+                selected: auto,
+                onTap: enabled ? onAuto : null,
+              ),
+            ),
+            Expanded(
+              child: _ModeChip(
+                label: 'Thủ công',
+                selected: !auto,
+                onTap: enabled ? onManual : null,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ModeChip extends StatelessWidget {
+  const _ModeChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? HydroTheme.leaf.withValues(alpha: 0.22) : Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w700,
+              color: selected ? HydroTheme.leaf : HydroTheme.muted,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ActuatorTile extends StatelessWidget {
   const _ActuatorTile({
     required this.title,
@@ -637,6 +752,9 @@ class _ActuatorTile extends StatelessWidget {
     required this.color,
     required this.icon,
     required this.detail,
+    this.manual = false,
+    this.enabled = true,
+    this.onChanged,
   });
 
   final String title;
@@ -644,6 +762,9 @@ class _ActuatorTile extends StatelessWidget {
   final Color color;
   final IconData icon;
   final String detail;
+  final bool manual;
+  final bool enabled;
+  final ValueChanged<bool>? onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -689,21 +810,29 @@ class _ActuatorTile extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(999),
-              color: (active ? color : HydroTheme.muted).withValues(alpha: 0.18),
-            ),
-            child: Text(
-              active ? 'ON' : 'OFF',
-              style: TextStyle(
-                color: active ? color : HydroTheme.muted,
-                fontWeight: FontWeight.w800,
-                fontSize: 12,
+          if (manual && onChanged != null)
+            Switch.adaptive(
+              value: active,
+              onChanged: enabled ? onChanged : null,
+              activeThumbColor: color,
+              activeTrackColor: color.withValues(alpha: 0.45),
+            )
+          else
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(999),
+                color: (active ? color : HydroTheme.muted).withValues(alpha: 0.18),
+              ),
+              child: Text(
+                active ? 'ON' : 'OFF',
+                style: TextStyle(
+                  color: active ? color : HydroTheme.muted,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
