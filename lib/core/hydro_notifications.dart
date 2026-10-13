@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'alert_engine.dart';
@@ -43,8 +42,9 @@ class HydroNotifications {
   static Future<void> init() async {
     if (_ready || kIsWeb || !_isMobile) return;
 
+    // Dùng icon launcher — vector custom dễ gây Bad notification trên Android 13+.
     const settings = InitializationSettings(
-      android: AndroidInitializationSettings('@drawable/ic_stat_hydro'),
+      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
       iOS: DarwinInitializationSettings(),
     );
     await plugin.initialize(settings);
@@ -60,16 +60,13 @@ class HydroNotifications {
     if (!_isMobile) return;
     await init();
     if (Platform.isAndroid) {
-      await plugin
-          .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>()
-          ?.requestNotificationsPermission();
-      final prefs = await SharedPreferences.getInstance();
-      const askedKey = 'hydro_battery_asked';
-      final battery = await Permission.ignoreBatteryOptimizations.status;
-      if (!battery.isGranted && prefs.getBool(askedKey) != true) {
-        await prefs.setBool(askedKey, true);
-        await Permission.ignoreBatteryOptimizations.request();
+      try {
+        await plugin
+            .resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>()
+            ?.requestNotificationsPermission();
+      } catch (e) {
+        if (kDebugMode) print('notification permission: $e');
       }
     }
   }
@@ -84,6 +81,7 @@ class HydroNotifications {
     if (alerts.isEmpty || !_isMobile) return;
     await init();
     final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
     final now = DateTime.now().millisecondsSinceEpoch;
     for (final alert in alerts) {
       final key = 'hydro_alert_ms_${alert.id}';
@@ -101,7 +99,7 @@ class HydroNotifications {
           visibility: NotificationVisibility.public,
           playSound: true,
           enableVibration: true,
-          icon: '@drawable/ic_stat_hydro',
+          icon: '@mipmap/ic_launcher',
           ticker: alert.title,
           styleInformation: BigTextStyleInformation(alert.body),
         ),

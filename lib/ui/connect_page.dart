@@ -308,10 +308,10 @@ class _ConnectPageState extends State<ConnectPage> {
                             ),
                     ),
                   ),
-                  if (auth.user?.email != null) ...[
+                  if ((auth.user?.email ?? '').isNotEmpty) ...[
                     const SizedBox(height: 20),
                     Text(
-                      auth.user!.email,
+                      auth.user?.email ?? '',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                             fontSize: 12,

@@ -18,9 +18,8 @@ class HomePage extends StatelessWidget {
     final size = MediaQuery.sizeOf(context);
     final live = h.mqttConnected && h.hasTelemetry;
     final waterFrac = ((h.waterPct ?? 0) / 100).clamp(0.0, 1.0);
-    final greet = auth.user?.name.isNotEmpty == true
-        ? auth.user!.name.split(' ').last
-        : null;
+    final name = auth.user?.name.trim() ?? '';
+    final greet = name.isNotEmpty ? name.split(RegExp(r'\s+')).last : null;
 
     return Scaffold(
       body: Container(
@@ -112,7 +111,7 @@ class HomePage extends StatelessWidget {
                             ),
                             const SizedBox(height: 6),
                             Text(
-                              'Điện thoại báo khi mực nước đầy, cạn hoặc pH lệch — kể cả lúc tắt app.',
+                              'Thông báo hiện như tin nhắn khi mực nước đầy, cạn hoặc pH lệch. Giữ thông báo “Thủy canh đang giám sát” để nhận lúc không mở app.',
                               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                                     fontSize: 12.5,
                                     height: 1.35,

@@ -12,15 +12,11 @@ dependencies:
   cupertino_icons: ^1.0.8
   mqtt_client: ^10.11.11
   provider: ^6.1.5+1
-  google_fonts: ^8.2.1
   flutter_animate: ^4.5.2
   http: ^1.6.0
   shared_preferences: ^2.5.5
   flutter_local_notifications: 19.4.0
-  flutter_background_service: ^5.1.0
-  connectivity_plus: 6.1.0
-  # 13.x kéo permission_handler_android đòi compileSdk 37; AGP 9.0.1 / Flutter hiện tại đang ở 36 → CI APK fail.
-  permission_handler: 11.4.0
+  flutter_foreground_task: ^11.0.3
 
 dev_dependencies:
   flutter_test:

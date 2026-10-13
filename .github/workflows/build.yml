@@ -136,8 +136,8 @@ jobs:
             - **iOS IPA:** `thuycanh-iot-stem.ipa` — bản CI chưa codesign (cần ký bằng Apple Developer / Xcode trước khi cài máy thật)
 
             ## Cảnh báo điện thoại
-            App báo khi mực nước đầy / thấp hoặc pH ngoài 5.5–6.5, kể cả lúc tắt app (Android foreground service + MQTT).
-            Khi có mạng trở lại mà còn cảnh báo, điện thoại sẽ báo lại. Không cần sửa firmware ESP32.
+            App giữ dòng “Thủy canh đang giám sát” và báo khi mực nước đầy / thấp hoặc pH ngoài 5.5–6.5 lúc không mở app.
+            Vuốt app khỏi danh sách gần đây vẫn nhận tin. Buộc dừng trong Cài đặt thì hết. Không cần sửa firmware ESP32.
 
             ## STEM ESP32
             App kết nối MQTT chipId `790` — hệ thống thủy canh IoT.

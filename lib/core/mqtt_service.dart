@@ -154,39 +154,53 @@ class MqttService {
     _updatesSub = updates.listen((events) {
       if (events.isEmpty) return;
       for (final event in events) {
-        final rec = event.payload as MqttPublishMessage;
-        final payload =
-            MqttPublishPayload.bytesToStringAsString(rec.payload.message);
-        final topic = event.topic;
-
-        dynamic value;
         try {
-          final decoded = jsonDecode(payload);
-          if (decoded is Map && decoded.containsKey('value')) {
-            value = decoded['value'];
-          } else {
-            value = decoded;
-          }
-        } catch (_) {
-          value = payload.trim();
-        }
+          final payloadMsg = event.payload;
+          if (payloadMsg is! MqttPublishMessage) continue;
+          final payload = MqttPublishPayload.bytesToStringAsString(
+            payloadMsg.payload.message,
+          );
+          final topic = event.topic;
 
-        if (kDebugMode) print('MQTT RX [$topic] $payload');
-        if (!_messageController.isClosed) {
-          _messageController.add({
-            'topic': topic,
-            'value': value,
-            'raw': payload,
-          });
+          dynamic value;
+          try {
+            final decoded = jsonDecode(payload);
+            if (decoded is Map && decoded.containsKey('value')) {
+              value = decoded['value'];
+            } else {
+              value = decoded;
+            }
+          } catch (_) {
+            value = payload.trim();
+          }
+
+          if (kDebugMode) print('MQTT RX [$topic] $payload');
+          if (!_messageController.isClosed) {
+            _messageController.add({
+              'topic': topic,
+              'value': value,
+              'raw': payload,
+            });
+          }
+        } catch (e) {
+          if (kDebugMode) print('MQTT parse error: $e');
         }
       }
+    }, onError: (e) {
+      if (kDebugMode) print('MQTT updates error: $e');
     });
   }
 
   void publish(String topic, String message) {
     if (!isConnected || _client == null) return;
-    final builder = MqttClientPayloadBuilder()..addString(message);
-    _client!.publishMessage(topic, MqttQos.atLeastOnce, builder.payload!);
+    try {
+      final builder = MqttClientPayloadBuilder()..addString(message);
+      final payload = builder.payload;
+      if (payload == null) return;
+      _client!.publishMessage(topic, MqttQos.atLeastOnce, payload);
+    } catch (e) {
+      if (kDebugMode) print('MQTT publish error: $e');
+    }
   }
 
   void setPower(bool on) {

@@ -178,12 +178,17 @@ class AuthProvider extends ChangeNotifier {
   DateTime? _lastSync;
 
   Future<void> syncTelemetry(Map<String, dynamic> state) async {
-    if (nodeId == null) return;
+    final id = nodeId;
+    if (id == null) return;
     final now = DateTime.now();
     if (_lastSync != null && now.difference(_lastSync!) < const Duration(seconds: 20)) {
       return;
     }
     _lastSync = now;
-    await _nodes.updateState(nodeId!, state);
+    try {
+      await _nodes.updateState(id, state);
+    } catch (e) {
+      if (kDebugMode) print('syncTelemetry: $e');
+    }
   }
 }

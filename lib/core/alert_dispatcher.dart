@@ -1,19 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import 'alert_engine.dart';
 import 'hydro_notifications.dart';
 
-/// Khi app đang mở mà dịch vụ nền chưa chạy, vẫn báo từ tiến trình chính.
+/// Báo cảnh báo từ tiến trình UI khi app đang mở.
 class AlertDispatcher {
   AlertDispatcher._();
 
   static final AlertEngine engine = AlertEngine();
   static Timer? _quiet;
-  static DateTime? _checked;
-  static bool _serviceOwns = false;
 
   static void reset() {
     _quiet?.cancel();
@@ -33,29 +31,26 @@ class AlertDispatcher {
     });
   }
 
-  static Future<void> _flush() async {
-    if (await _serviceOwnsAlerts()) return;
-    final reconnect = engine.pendingReconnect;
-    engine.pendingReconnect = false;
-    final due = engine.consume(reconnect: reconnect);
-    await HydroNotifications.showAlerts(due, fromReconnect: reconnect);
-    await HydroNotifications.dismissInactive(engine.activeIds);
-  }
-
+  /// Khi dịch vụ nền đang chạy, chỉ tiến trình đó bắn thông báo.
   static Future<bool> _serviceOwnsAlerts() async {
-    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+    if (kIsWeb) return false;
+    try {
+      return await FlutterForegroundTask.isRunningService;
+    } catch (_) {
       return false;
     }
-    final now = DateTime.now();
-    if (_checked != null && now.difference(_checked!) < const Duration(seconds: 4)) {
-      return _serviceOwns;
-    }
+  }
+
+  static Future<void> _flush() async {
     try {
-      _serviceOwns = await FlutterBackgroundService().isRunning();
-    } catch (_) {
-      _serviceOwns = false;
+      if (await _serviceOwnsAlerts()) return;
+      final reconnect = engine.pendingReconnect;
+      engine.pendingReconnect = false;
+      final due = engine.consume(reconnect: reconnect);
+      await HydroNotifications.showAlerts(due, fromReconnect: reconnect);
+      await HydroNotifications.dismissInactive(engine.activeIds);
+    } catch (e) {
+      if (kDebugMode) print('AlertDispatcher._flush: $e');
     }
-    _checked = now;
-    return _serviceOwns;
   }
 }

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
-/// Thủy canh STEM — lá sâu, nước trong, nắng ấm (không dùng purple / cream AI-default)
+/// Thủy canh STEM — font hệ thống (không tải Google Fonts lúc chạy → tránh crash APK).
 class HydroTheme {
   static const Color deep = Color(0xFF06140F);
   static const Color mist = Color(0xFF0B2218);
@@ -16,12 +15,17 @@ class HydroTheme {
   static const Color line = Color(0x1AFFFFFF);
 
   static ThemeData dark() {
-    final display = GoogleFonts.frauncesTextTheme();
-    final body = GoogleFonts.dmSansTextTheme();
-
-    return ThemeData(
+    final base = ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
+      fontFamily: 'Roboto',
+    );
+    final text = base.textTheme.apply(
+      bodyColor: soft,
+      displayColor: soft,
+    );
+
+    return base.copyWith(
       scaffoldBackgroundColor: deep,
       colorScheme: const ColorScheme.dark(
         primary: leaf,
@@ -33,31 +37,31 @@ class HydroTheme {
         onSurface: soft,
         error: warn,
       ),
-      textTheme: body.copyWith(
-        displayLarge: display.displayLarge?.copyWith(
+      textTheme: text.copyWith(
+        displayLarge: text.displayLarge?.copyWith(
           color: soft,
           fontWeight: FontWeight.w700,
           letterSpacing: -1.8,
           height: 0.94,
         ),
-        displayMedium: display.displayMedium?.copyWith(
+        displayMedium: text.displayMedium?.copyWith(
           color: soft,
           fontWeight: FontWeight.w700,
           letterSpacing: -1.3,
           height: 0.96,
         ),
-        headlineMedium: display.headlineMedium?.copyWith(
+        headlineMedium: text.headlineMedium?.copyWith(
           color: soft,
           fontWeight: FontWeight.w700,
         ),
-        titleLarge: body.titleLarge?.copyWith(
+        titleLarge: text.titleLarge?.copyWith(
           color: soft,
           fontWeight: FontWeight.w700,
           letterSpacing: -0.2,
         ),
-        bodyLarge: body.bodyLarge?.copyWith(color: soft, height: 1.45),
-        bodyMedium: body.bodyMedium?.copyWith(color: muted, height: 1.4),
-        labelLarge: body.labelLarge?.copyWith(
+        bodyLarge: text.bodyLarge?.copyWith(color: soft, height: 1.45),
+        bodyMedium: text.bodyMedium?.copyWith(color: muted, height: 1.4),
+        labelLarge: text.labelLarge?.copyWith(
           color: soft,
           fontWeight: FontWeight.w700,
         ),

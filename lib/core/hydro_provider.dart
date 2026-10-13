@@ -130,25 +130,36 @@ class HydroProvider extends ChangeNotifier {
         : 'Đang kết nối...';
     notifyListeners();
 
-    _sub ??= _mqtt.messages.listen(_onMessage);
-    AlertDispatcher.markReconnect();
+    try {
+      _sub ??= _mqtt.messages.listen(
+        _onMessage,
+        onError: (e) {
+          if (kDebugMode) print('MQTT stream: $e');
+        },
+      );
+      AlertDispatcher.markReconnect();
 
-    final ok = await _mqtt.connect(force: force);
-    connecting = false;
-    if (!ok) {
-      status = 'Chưa kết nối được — hãy thử lại';
+      final ok = await _mqtt.connect(force: force);
+      connecting = false;
+      if (!ok) {
+        status = 'Chưa kết nối được — hãy thử lại';
+        notifyListeners();
+        return;
+      }
+
+      status = chipBound
+          ? 'Đang chờ máy ${AppConfig.chipId} phản hồi...'
+          : 'Đã sẵn sàng';
       notifyListeners();
-      return;
-    }
 
-    status = chipBound
-        ? 'Đang chờ máy ${AppConfig.chipId} phản hồi...'
-        : 'Đã sẵn sàng';
-    notifyListeners();
-
-    // Đồng bộ chế độ điều khiển hiện tại xuống ESP32 (AUTO hoặc ON/OFF thủ công)
-    if (chipBound && ok) {
-      applyControlModes();
+      if (chipBound) {
+        applyControlModes();
+      }
+    } catch (e) {
+      connecting = false;
+      status = 'Lỗi kết nối — hãy thử lại';
+      notifyListeners();
+      if (kDebugMode) print('HydroProvider.start: $e');
     }
   }
 
@@ -221,88 +232,102 @@ class HydroProvider extends ChangeNotifier {
   }
 
   void _onMessage(Map<String, dynamic> data) {
-    final topic = data['topic'] as String? ?? '';
-    final value = data['value'];
+    try {
+      final topic = data['topic'] as String? ?? '';
+      final value = data['value'];
 
-    if (!chipBound) return;
+      if (!chipBound) return;
 
-    if (!_isOurChipTopic(topic)) {
-      if (kDebugMode) print('Bỏ qua topic chip khác: $topic');
-      return;
-    }
-
-    if (_is(topic, AppConfig.topicOnline)) {
-      online = value.toString().toLowerCase() == 'online';
-      if (online) {
-        final wasVerified = chipVerified;
-        _markChipVerified();
-        status = hasTelemetry ? 'OK' : 'Máy ${AppConfig.chipId} đã sẵn sàng';
-        if (!wasVerified) applyControlModes();
-      } else {
-        online = false;
-        status = 'Máy ${AppConfig.chipId} tạm offline — chờ kết nối lại';
+      if (!_isOurChipTopic(topic)) {
+        if (kDebugMode) print('Bỏ qua topic chip khác: $topic');
+        return;
       }
-    } else if (_is(topic, AppConfig.topicTemp)) {
-      temperature = _asDouble(value);
-      _markChipVerified();
-    } else if (_is(topic, AppConfig.topicHumi)) {
-      humidity = _asDouble(value);
-      _markChipVerified();
-    } else if (_is(topic, AppConfig.topicPh)) {
-      ph = _asDouble(value);
-      _markChipVerified();
-    } else if (_is(topic, AppConfig.topicTds)) {
-      // TDS đã bỏ khỏi UI — bỏ qua payload
-      return;
-    } else if (_is(topic, AppConfig.topicWater)) {
-      waterPct = _asDouble(value);
-      _markChipVerified();
-    } else if (_is(topic, AppConfig.topicDist)) {
-      distCm = _asDouble(value);
-      _inferAlertFromDistance();
-      _markChipVerified();
-    } else if (_is(topic, AppConfig.topicWaterAlert)) {
-      waterAlert = _parseWaterAlert(value);
-      _markChipVerified();
-    } else if (_is(topic, AppConfig.topicLight)) {
-      lightLevel = _asLight01(value);
-      _markChipVerified();
-    } else if (_is(topic, AppConfig.topicPump)) {
-      pumpOn = _asOn(value);
-      _markChipVerified();
-    } else if (_is(topic, AppConfig.topicLamp)) {
-      lampOn = _asOn(value);
-      _markChipVerified();
-    } else if (_is(topic, AppConfig.topicPower)) {
-      powerOn = _asOn(value);
-      _markChipVerified();
-    } else if (_is(topic, AppConfig.topicStatus)) {
-      status = value?.toString() ?? status;
-      _inferAlertFromStatus(status);
-      _markChipVerified();
-    } else {
-      return;
-    }
 
-    lastUpdate = DateTime.now();
-    AlertDispatcher.onUiMessage(topic, value);
-    notifyListeners();
+      if (_is(topic, AppConfig.topicOnline)) {
+        online = value.toString().toLowerCase() == 'online';
+        if (online) {
+          final wasVerified = chipVerified;
+          _markChipVerified();
+          status = hasTelemetry ? 'OK' : 'Máy ${AppConfig.chipId} đã sẵn sàng';
+          if (!wasVerified) applyControlModes();
+        } else {
+          online = false;
+          status = 'Máy ${AppConfig.chipId} tạm offline — chờ kết nối lại';
+        }
+      } else if (_is(topic, AppConfig.topicTemp)) {
+        temperature = _asDouble(value);
+        _markChipVerified();
+      } else if (_is(topic, AppConfig.topicHumi)) {
+        humidity = _asDouble(value);
+        _markChipVerified();
+      } else if (_is(topic, AppConfig.topicPh)) {
+        ph = _asDouble(value);
+        _markChipVerified();
+      } else if (_is(topic, AppConfig.topicTds)) {
+        return;
+      } else if (_is(topic, AppConfig.topicWater)) {
+        waterPct = _asDouble(value);
+        _markChipVerified();
+      } else if (_is(topic, AppConfig.topicDist)) {
+        distCm = _asDouble(value);
+        _inferAlertFromDistance();
+        _markChipVerified();
+      } else if (_is(topic, AppConfig.topicWaterAlert)) {
+        waterAlert = _parseWaterAlert(value);
+        _markChipVerified();
+      } else if (_is(topic, AppConfig.topicLight)) {
+        lightLevel = _asLight01(value);
+        _markChipVerified();
+      } else if (_is(topic, AppConfig.topicPump)) {
+        pumpOn = _asOn(value);
+        _markChipVerified();
+      } else if (_is(topic, AppConfig.topicLamp)) {
+        lampOn = _asOn(value);
+        _markChipVerified();
+      } else if (_is(topic, AppConfig.topicPower)) {
+        powerOn = _asOn(value);
+        _markChipVerified();
+      } else if (_is(topic, AppConfig.topicStatus)) {
+        status = value?.toString() ?? status;
+        _inferAlertFromStatus(status);
+        _markChipVerified();
+      } else {
+        return;
+      }
 
-    if (hasTelemetry && onTelemetry != null) {
-      onTelemetry!({
-        'temperature': temperature,
-        'humidity': humidity,
-        'ph': ph,
-        'water': waterPct,
-        'dist': distCm,
-        'light': lightLevel,
-        'pump': pumpOn,
-        'lamp': lampOn,
-        'power': powerOn,
-        'status': status,
-        'waterAlert': waterAlert.name,
-        'chipId': AppConfig.chipId,
-      });
+      lastUpdate = DateTime.now();
+      try {
+        AlertDispatcher.onUiMessage(topic, value);
+      } catch (e) {
+        if (kDebugMode) print('AlertDispatcher: $e');
+      }
+      notifyListeners();
+
+      final sync = onTelemetry;
+      if (hasTelemetry && sync != null) {
+        unawaited(() async {
+          try {
+            await sync({
+              'temperature': temperature,
+              'humidity': humidity,
+              'ph': ph,
+              'water': waterPct,
+              'dist': distCm,
+              'light': lightLevel,
+              'pump': pumpOn,
+              'lamp': lampOn,
+              'power': powerOn,
+              'status': status,
+              'waterAlert': waterAlert.name,
+              'chipId': AppConfig.chipId,
+            });
+          } catch (e) {
+            if (kDebugMode) print('telemetry sync: $e');
+          }
+        }());
+      }
+    } catch (e, st) {
+      if (kDebugMode) print('_onMessage error: $e\n$st');
     }
   }
 
